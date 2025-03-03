@@ -13,6 +13,7 @@ services:
       - nextcloud:/var/www/html
       - /home/till/nextcloud_data:/var/www/html/data
       - /home/till/Pictures:/opt/pictures:ro
+      - /home/till/Documents:/opt/documents:ro
     networks:
       - redisnet
       - dbnet
