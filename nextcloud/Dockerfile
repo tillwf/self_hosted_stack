@@ -2,7 +2,7 @@
 # pinned deliberately. To upgrade, bump NC_VERSION by a single major release,
 # redeploy, confirm `occ status` reports the new version with
 # needsDbUpgrade: false, and only then bump again. See ../README.md.
-ARG NC_VERSION=33.0.9
+ARG NC_VERSION=34.0.4
 
 FROM nextcloud:${NC_VERSION}-apache
 
