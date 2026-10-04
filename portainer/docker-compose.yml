@@ -1,14 +1,16 @@
-version: "3"
-
 services:
     portainer:
-        image: 'portainer/portainer-ce:2.18.2'
+        # 2.18.2 speaks Docker API 1.37, but the host now runs Docker Engine 29,
+        # which requires a minimum API version of 1.44. That combination cannot
+        # reach the daemon at all, so keep this at a version that can.
+        image: 'portainer/portainer-ce:2.45.1'
         restart: always
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
             - portainer_data:/data
         ports:
             - "9443:9443"
-            - "8000:8000"
+            # 8000 is the Edge agent tunnel. Published on 8888 to keep 8000 free.
+            - "8888:8000"
 volumes:
     portainer_data: {}
