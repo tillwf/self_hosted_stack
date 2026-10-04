@@ -21,6 +21,33 @@ services:
       - MYSQL_DATABASE=$MYSQL_DATABASE
       - MYSQL_USER=$MYSQL_USER
       - MYSQL_PASSWORD=$MYSQL_PASSWORD
+  cron:
+    # Nextcloud's background jobs. Without this, `backgroundjobs_mode=cron` is
+    # set but nothing ever calls cron.php, and the jobs silently stop running.
+    # Same build and mounts as `nc` so cron.php sees the identical code and
+    # data; /cron.sh is busybox crond running the upstream 5-minute schedule.
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    entrypoint: /cron.sh
+    restart: always
+    volumes:
+      - nextcloud:/var/www/html
+      - /home/till/nextcloud_data:/var/www/html/data
+      - /home/till/Pictures:/opt/pictures:ro
+      - /home/till/Documents:/opt/documents:ro
+    depends_on:
+      - db
+      - redis
+    networks:
+      - redisnet
+      - dbnet
+    environment:
+      - REDIS_HOST=redis
+      - MYSQL_HOST=db
+      - MYSQL_DATABASE=$MYSQL_DATABASE
+      - MYSQL_USER=$MYSQL_USER
+      - MYSQL_PASSWORD=$MYSQL_PASSWORD
   redis:
     # Pinned to the minor series currently deployed. `alpine` floated and would
     # have jumped majors on any recreate.
@@ -35,7 +62,17 @@ services:
     # could have landed on a MariaDB major Nextcloud does not support — and
     # MariaDB cannot be downgraded across majors in place.
     image: mariadb:11.7
-    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    # transaction-isolation/binlog-format are Nextcloud requirements. The rest
+    # comes from the serverinfo database checks: a 96 MB redo log forces
+    # frequent checkpoints, and the slow query log was off with a 10s threshold,
+    # so nothing problematic was ever recorded.
+    command: >-
+      --transaction-isolation=READ-COMMITTED
+      --binlog-format=ROW
+      --innodb-log-file-size=256M
+      --slow-query-log=1
+      --slow-query-log-file=/var/lib/mysql/slow.log
+      --long-query-time=2
     restart: always
     volumes:
       - nextcloud_db:/var/lib/mysql

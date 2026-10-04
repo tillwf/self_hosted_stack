@@ -41,6 +41,23 @@ tags (`latest`, `alpine`, `apache`) previously meant that an unrelated redeploy
 could silently jump a major version — which for both Nextcloud and MariaDB is
 not a recoverable operation. Bump tags deliberately, one at a time.
 
+## Nextcloud background jobs
+
+The `nextcloud` stack runs a separate `cron` service: the same locally built
+image with `entrypoint: /cron.sh`, which is busybox crond calling `cron.php`
+every five minutes. Nextcloud's `backgroundjobs_mode` is set to `cron`, so
+without that container the jobs do not run at all and nothing says so until
+Settings → Overview reports "Last background job execution ran N months ago".
+
+Check it with:
+
+```bash
+docker logs --tail 20 nextcloud-cron-1
+docker exec -u www-data nextcloud-nc-1 php occ config:app:get core lastcron
+```
+
+`lastcron` is a Unix timestamp and should never be more than a few minutes old.
+
 ## Upgrading Nextcloud
 
 For the general procedure for bumping any app in this repo, see
