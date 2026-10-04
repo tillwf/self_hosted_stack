@@ -1,21 +1,27 @@
-version: '3'
-
 services:
     db:
-        image: postgres:16
+        # Pinned to the running version. `postgres:16` floated within the major,
+        # and the tag had already moved on, orphaning this container's image.
+        image: postgres:16.6
         volumes:
             - ./data/postgres:/var/lib/postgresql/data
-        ports:
-            - "5432:5432"
+        # No published port on purpose. The app reaches the database as
+        # POSTGRES_HOST=db over the compose network, and no nginx-proxy-manager
+        # host forwards to 5432, so publishing it only exposed Postgres to the
+        # internet.
         restart: unless-stopped
         environment:
             - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
             - POSTGRES_USER=${POSTGRES_USER}
             - POSTGRES_DB=${POSTGRES_DATABASE}
     app:
-        image: joplin/server:latest
+        # Pinned to the running version. Note this is a beta build; moving to a
+        # current stable release is a separate, deliberate upgrade.
+        image: joplin/server:3.0.1-beta
         depends_on:
             - db
+        # Required: nginx-proxy-manager forwards joplin.till.wf to the host's
+        # public IP on 22300, so this publish is load-bearing.
         ports:
             - "22300:22300"
         restart: unless-stopped

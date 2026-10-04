@@ -1,16 +1,19 @@
-version: '3'
-
 volumes:
   letsencrypt:
 
 services:
   npm:
-    image: 'jc21/nginx-proxy-manager:latest'
+    # Pinned to the running version. `latest` floated and has since moved on
+    # upstream, so a recreate would have jumped versions unannounced — the same
+    # failure class that took Portainer down against Docker 29.
+    image: 'jc21/nginx-proxy-manager:2.12.1'
     container_name: nginx_proxy_app
     restart: unless-stopped
+    # All three are load-bearing: nginx-proxy-manager forwards every proxy host
+    # to this server's public IP, and 81 serves the admin UI behind npm.till.wf.
     ports:
-      - '80:80'
       - '443:443'
+      - '80:80'
       - '81:81'
     volumes:
       - ./data:/data
@@ -19,7 +22,9 @@ services:
       - npm-db
 
   npm-db:
-    image: 'jc21/mariadb-aria:latest'
+    # Pinned to the running version. Note jc21/mariadb-aria publishes no
+    # floating minor tag, so 10.11.5 is the only way to pin this.
+    image: 'jc21/mariadb-aria:10.11.5'
     container_name: nginx_proxy_db
     restart: unless-stopped
     volumes:

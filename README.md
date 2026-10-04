@@ -6,12 +6,30 @@ Portainer tracks the `main` branch of this repository and checks each stack's
 source of truth** — editing the files Portainer checked out gets overwritten on
 the next redeploy.
 
-| Stack | Deployed as | Notes |
-| --- | --- | --- |
-| `nextcloud/` | `nextcloud` | `nc` service is **built locally**, not pulled |
-| `joplin/` | `joplin` | |
-| `nginx-proxy-manager/` | `nginx_proxy` | TLS termination / reverse proxy |
-| `portainer/` | `portainer` | |
+| Directory | Portainer stack | Deployed from | Notes |
+| --- | --- | --- | --- |
+| `nextcloud/` | `nextcloud` (id 2) | **this repo**, `refs/heads/main` | `nc` service is **built locally**, not pulled |
+| `joplin/` | `joplin` (id 15) | Portainer web editor | repo copy is a mirror, see below |
+| `nginx-proxy-manager/` | `npm` (id 14) | Portainer web editor | repo copy is a mirror, see below |
+| `portainer/` | n/a | **this repo**, via `docker compose` on the host | Portainer cannot deploy itself |
+
+Only the `nextcloud` stack is a git-backed Portainer stack, so it is the only
+one Portainer redeploys from this repository. `joplin` and `npm` were created
+through Portainer's web editor, and their compose files here are kept in sync
+by hand as documentation — editing them does **not** deploy anything. Change
+those two through Portainer (or its API), then mirror the change here.
+
+They cannot simply be converted to git-backed stacks: both use relative bind
+mounts (`./data`), which the Docker daemon resolves against the stack's working
+directory on the host (`/data/compose/14`, `/data/compose/15`). A git-backed
+stack gets a different working directory, so `./data` would resolve to an empty
+path and the services would come up with no configuration, no certificates and
+no database. Converting them requires rewriting those binds to absolute paths
+or named volumes first, and migrating the data.
+
+`portainer/` is deployed by hand from a checkout on the host at
+`/home/till/self_hosted_stack`, because Portainer cannot recreate its own
+container while it is the thing being replaced.
 
 Each stack reads its secrets from Portainer's stack environment, following the
 corresponding `.env.template`.
@@ -116,3 +134,32 @@ cannot be downgraded across majors in place, so an upgrade is one major at a
 time with a dump taken first, and the target must be a version Nextcloud
 supports. Note that 11.7 is a short-term release; moving to an LTS series
 (11.4) is a *downgrade* and needs a dump-and-restore, not a tag bump.
+
+## Ingress: nginx-proxy-manager forwards via the public IP
+
+Every proxy host in nginx-proxy-manager points at this server's **public IP**
+rather than at a container over a Docker network:
+
+    nextcloud.till.wf  ->  176.31.183.86:8080
+    joplin.till.wf     ->  176.31.183.86:22300
+    portainer.till.wf  ->  176.31.183.86:9443
+    npm.till.wf        ->  176.31.183.86:81
+
+Two consequences worth knowing before changing any `ports:` entry:
+
+- Those published ports are **load-bearing**. Removing or rebinding `8080`,
+  `22300`, `9443` or `81` to localhost breaks the corresponding site, because
+  the proxy reaches them by hairpinning out through the public interface.
+- Every proxied service is therefore **also reachable directly on its raw
+  port over plain HTTP**, bypassing TLS. That includes the nginx-proxy-manager
+  admin login on port 81.
+
+Fixing this properly means putting the proxy and the services on a shared
+Docker network (or binding published ports to the Docker bridge address) and
+repointing each proxy host at the container. That is an ingress change
+affecting every stack, so it has not been done here.
+
+The Joplin database previously published `5432` on all interfaces, exposing
+Postgres to the internet. Nothing forwarded to it and the app reaches the
+database as `POSTGRES_HOST=db` over the compose network, so the publish has
+been removed.
