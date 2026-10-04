@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   nc:
     build:
@@ -24,14 +22,19 @@ services:
       - MYSQL_USER=$MYSQL_USER
       - MYSQL_PASSWORD=$MYSQL_PASSWORD
   redis:
-    image: redis:alpine
+    # Pinned to the minor series currently deployed. `alpine` floated and would
+    # have jumped majors on any recreate.
+    image: redis:7.4-alpine
     restart: always
     networks:
       - redisnet
     expose:
       - 6379
   db:
-    image: mariadb:latest
+    # Pinned to the series currently deployed. `latest` floated, so a recreate
+    # could have landed on a MariaDB major Nextcloud does not support — and
+    # MariaDB cannot be downgraded across majors in place.
+    image: mariadb:11.7
     command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
     restart: always
     volumes:
@@ -47,10 +50,7 @@ services:
       - 3306
 volumes:
   nextcloud:
-  nextcloud_data:
   nextcloud_db:
-  pictures:
 networks:
   dbnet:
   redisnet:
-
