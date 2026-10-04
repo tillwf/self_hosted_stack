@@ -43,6 +43,10 @@ not a recoverable operation. Bump tags deliberately, one at a time.
 
 ## Upgrading Nextcloud
 
+For the general procedure for bumping any app in this repo, see
+[`UPGRADING.md`](UPGRADING.md). The rest of this section is the Nextcloud-specific
+major-version runbook.
+
 Nextcloud **refuses to skip major versions**: the upgrade path is enforced by
 `$OC_VersionCanBeUpgradedFrom` in the server's `version.php`. Going from 30 to
 35 directly leaves the instance unable to start. Each major is a separate
