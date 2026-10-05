@@ -12,7 +12,10 @@ services:
       - USER_GID=1000
       # Anything that lives in app.ini can be set as FORGEJO__section__KEY.
       - FORGEJO__database__DB_TYPE=sqlite3
-      - FORGEJO__database__PATH=/data/forgejo/forgejo.db
+      # Must live under /data/gitea: the entrypoint creates and chowns that
+      # directory for the git user, while /data itself stays root-owned, so a
+      # path like /data/forgejo/ fails with "mkdir: permission denied".
+      - FORGEJO__database__PATH=/data/gitea/forgejo.db
       - FORGEJO__server__DOMAIN=git.till.wf
       - FORGEJO__server__ROOT_URL=https://git.till.wf/
       - FORGEJO__server__SSH_DOMAIN=till.wf
