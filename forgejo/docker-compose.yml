@@ -27,6 +27,10 @@ services:
       # Forgejo's built-in SSH server would try to bind 22 as well and the
       # container dies with "bind: address already in use".
       - FORGEJO__server__SSH_PORT=2222
+      # Set explicitly rather than omitted: environment-to-ini only ever writes
+      # keys into app.ini, so a value left over from an earlier run survives
+      # removal from this file and has to be overwritten.
+      - FORGEJO__server__START_SSH_SERVER=false
       # Private instance: no self-signup, and nothing at all is readable
       # without an account — not even repositories marked public.
       - FORGEJO__service__DISABLE_REGISTRATION=true
