@@ -1,0 +1,50 @@
+services:
+  forgejo:
+    # Pinned like every other image here. Forgejo migrates its database on
+    # first start of a new major and that is not reversible, so bump one major
+    # at a time and take the volume snapshot first (see README).
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    restart: always
+    environment:
+      # Files in the volume end up owned by till, so host-side backups of
+      # /var/lib/docker/volumes/forgejo_forgejo do not need root.
+      - USER_UID=1000
+      - USER_GID=1000
+      # Anything that lives in app.ini can be set as FORGEJO__section__KEY.
+      - FORGEJO__database__DB_TYPE=sqlite3
+      - FORGEJO__database__PATH=/data/forgejo/forgejo.db
+      - FORGEJO__server__DOMAIN=git.till.wf
+      - FORGEJO__server__ROOT_URL=https://git.till.wf/
+      - FORGEJO__server__SSH_DOMAIN=till.wf
+      - FORGEJO__server__SSH_PORT=2222
+      - FORGEJO__server__START_SSH_SERVER=true
+      - FORGEJO__server__SSH_LISTEN_PORT=22
+      # Private instance: no self-signup, and nothing at all is readable
+      # without an account — not even repositories marked public.
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+      - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
+      - FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE=true
+      - FORGEJO__repository__DEFAULT_PRIVATE=private
+      - FORGEJO__session__COOKIE_SECURE=true
+      # Without this the first visitor to reach the site gets the installer,
+      # which creates the admin account. The admin is created from the CLI
+      # instead, before the proxy host exists.
+      - FORGEJO__security__INSTALL_LOCK=true
+      - FORGEJO__mailer__ENABLED=false
+    volumes:
+      - forgejo:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      # Git over SSH only. HTTP is deliberately not published: this stack joins
+      # npm_default and nginx-proxy-manager reaches it as http://forgejo:3000,
+      # so port 3000 never appears on the public interface the way 8080 and
+      # 22300 do for the other stacks.
+      - "2222:22"
+    networks:
+      - npm_default
+networks:
+  npm_default:
+    external: true
+volumes:
+  forgejo:

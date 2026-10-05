@@ -34,6 +34,56 @@ container while it is the thing being replaced.
 Each stack reads its secrets from Portainer's stack environment, following the
 corresponding `.env.template`.
 
+## Forgejo: private git
+
+`git.till.wf`, SQLite, single container. It is configured as a closed
+instance: `DISABLE_REGISTRATION` and `REQUIRE_SIGNIN_VIEW` are both on, so
+there is no signup form and nothing — including repositories marked public —
+is readable without logging in. New accounts are created by the admin.
+
+`INSTALL_LOCK=true` means the web installer never runs, so the admin account
+has to be created from the CLI after the first start:
+
+```bash
+docker exec -u git forgejo-forgejo-1 forgejo admin user create \
+  --admin --username till --email till@till.wf --random-password
+```
+
+It prints the password once. Change it after the first login and enable TOTP.
+
+### Ingress
+
+Unlike the other stacks, Forgejo does **not** publish its HTTP port. It joins
+the existing `npm_default` network, so the proxy host points at the container:
+
+    git.till.wf  ->  http://forgejo:3000     (scheme http, no TLS inside Docker)
+
+That keeps the web UI off the public interface entirely, which is not true of
+`nextcloud.till.wf` or `joplin.till.wf` — see the ingress section below. If the
+proxy host is created with the public IP by mistake it will simply not connect,
+since 3000 is not published.
+
+### Git over SSH
+
+Container port 22 is published on host **2222** (3010 is the host's own sshd):
+
+```bash
+git clone ssh://git@till.wf:2222/till/repo.git
+```
+
+Add your public key under *Settings → SSH keys* first. Over HTTPS, use a
+Forgejo access token as the password rather than the account password.
+
+### Upgrading
+
+One major at a time; the database migration on first start is not reversible.
+Snapshot the volume before bumping the tag:
+
+```bash
+docker run --rm -v forgejo_forgejo:/d:ro -v "$HOME/nc-backup":/b \
+  busybox tar czf /b/forgejo-$(date +%Y%m%dT%H%M%S).tar.gz -C /d .
+```
+
 ## Image versions are pinned on purpose
 
 Every image tag in this repository is pinned to a specific release. Floating
