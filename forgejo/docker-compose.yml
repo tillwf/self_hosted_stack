@@ -21,9 +21,12 @@ services:
       - FORGEJO__server__DOMAIN=git.till.wf
       - FORGEJO__server__ROOT_URL=https://git.till.wf/
       - FORGEJO__server__SSH_DOMAIN=till.wf
+      # SSH_PORT is what Forgejo advertises in clone URLs; the container is
+      # served by the OpenSSH daemon the image already runs on port 22, which
+      # is published on the host as 2222. Do not set START_SSH_SERVER here:
+      # Forgejo's built-in SSH server would try to bind 22 as well and the
+      # container dies with "bind: address already in use".
       - FORGEJO__server__SSH_PORT=2222
-      - FORGEJO__server__START_SSH_SERVER=true
-      - FORGEJO__server__SSH_LISTEN_PORT=22
       # Private instance: no self-signup, and nothing at all is readable
       # without an account — not even repositories marked public.
       - FORGEJO__service__DISABLE_REGISTRATION=true
