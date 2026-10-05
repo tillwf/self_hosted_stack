@@ -6,8 +6,10 @@ services:
     image: codeberg.org/forgejo/forgejo:16.0.5
     restart: always
     environment:
-      # Files in the volume end up owned by till, so host-side backups of
-      # /var/lib/docker/volumes/forgejo_forgejo do not need root.
+      # 1000 is the uid the previous Gitea wrote /home/till/gitea as, so the
+      # existing repositories stay writable without a chown. Note this is not
+      # till, who is 1001 — reading the data from the host needs sudo or a
+      # container.
       - USER_UID=1000
       - USER_GID=1000
       # Anything that lives in app.ini can be set as FORGEJO__section__KEY.
