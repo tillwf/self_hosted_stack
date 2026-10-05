@@ -35,7 +35,12 @@ services:
       - FORGEJO__security__INSTALL_LOCK=true
       - FORGEJO__mailer__ENABLED=false
     volumes:
-      - forgejo:/data
+      # Bind mount rather than a named volume, like Nextcloud's data directory:
+      # the repositories stay visible and backupable from the host. This path
+      # already held a Gitea instance whose MySQL database is long gone, so the
+      # bare repos under git/repositories are present but unadopted — claim
+      # them from Site Administration once the admin user exists.
+      - /home/till/gitea:/data
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     ports:
@@ -49,5 +54,3 @@ services:
 networks:
   npm_default:
     external: true
-volumes:
-  forgejo:
