@@ -128,6 +128,41 @@ page and then fail every request the browser makes.
 artist/album/track. The regexes there have to match the library's directory
 layout or the scan finds nothing.
 
+## Mirroring GitHub into Forgejo
+
+Every public, non-fork repository of a GitHub account is kept in Forgejo as a
+**pull mirror**. Forgejo refreshes each mirror itself on that mirror's
+interval — there is no external job for the content.
+
+`scripts/forgejo-mirror-github.py` reconciles the *set* of repositories, not
+their contents: it creates a mirror for anything on GitHub that Forgejo does
+not have yet. That is the only part a daily cron is needed for. It never
+deletes: a repository removed from GitHub stays behind as a stale mirror,
+which is the safer direction for what is effectively a backup.
+
+Configuration lives outside this repository, in `~/.config/forgejo-mirror.env`
+(mode 0600) on the server:
+
+```
+FORGEJO_URL=https://git.example.com
+FORGEJO_TOKEN=...        # scopes: write:repository, read:user
+FORGEJO_OWNER=...
+GITHUB_USER=...
+MIRROR_INTERVAL=24h
+INCLUDE_FORKS=0
+```
+
+Install the daily run with `crontab -e`:
+
+```cron
+17 4 * * * /usr/bin/python3 $HOME/self_hosted_stack/scripts/forgejo-mirror-github.py >> $HOME/logs/forgejo-mirror.log 2>&1
+```
+
+Mirrors are read-only in Forgejo — pushing to them is rejected, because the
+next sync would discard the commits. Push to GitHub and let the mirror follow.
+A repository that should be writable in Forgejo must not be a mirror; keep it
+out of the GitHub account, or accept that the two will diverge.
+
 ## Image versions are pinned on purpose
 
 Every image tag in this repository is pinned to a specific release. Floating
