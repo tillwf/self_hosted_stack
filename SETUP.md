@@ -244,6 +244,17 @@ whole setup.** Two patterns:
 | Shared Docker network | the compose *service* name | The service publishes no port. Reachable **only** through HTTPS. |
 | Published port | `<SERVER_IP>` | The proxy hairpins out through the public interface, so the service is **also** reachable on its raw port over plain HTTP, bypassing TLS. |
 
+With the first pattern, the forward host must be a name Docker actually
+registers on that network: the **service** name from the compose file, or an
+explicit alias. The *stack* name is not one of them — it only ever appears as
+a prefix in container names. Getting this wrong produces a 502 and one line in
+the proxy's error log saying the name could not be resolved, which is the
+first place to look for any 502 here.
+
+Give a generic service an explicit alias before putting it on a shared
+network. A stack whose web entry point is literally called `nginx` cannot
+claim that name on a network two other stacks also use.
+
 The second works without touching any other stack, which is why it tends to
 happen first. The first is strictly better: put the service on the same Docker
 network as the proxy, drop its `ports:` entry, and point the proxy host at the
@@ -273,6 +284,48 @@ the latter reuses the stale checkout and silently ignores your commits. For a
 stack that builds its image locally, confirm it actually rebuilt; Portainer
 will otherwise reuse a cached image.
 
+### Three things Portainer does that compose does not
+
+**Relative bind mounts become empty directories.** Portainer runs compose from
+inside its own container, where the stack is checked out at
+`/data/compose/<id>/`. The Docker *daemon* resolves bind mount sources against
+the **host** filesystem, where that path does not exist — so it creates an
+empty directory there and mounts that. The container sees a directory where it
+expected a config file, falls back to its defaults, and the failure looks like
+a mystery 502 rather than a missing file.
+
+Build contexts are read by the compose client rather than the daemon, so they
+do work. A stack that needs a file from its own directory should bake it into
+an image:
+
+```dockerfile
+FROM upstream:pinned
+COPY the-file /where/it/goes
+```
+
+An absolute host path is the other option, at the cost of the file no longer
+living with the stack that uses it.
+
+**`stack.env` does get written, despite the dialog.** The *Add stack* screen
+says the file must already be in the repository for a git-backed deployment.
+In practice Portainer writes the variables you type into `stack.env` next to
+the checkout. Do not rely on either behaviour: write every value the
+containers need as an explicit `${VAR}` substitution in the compose file, and
+it works under both readings. An `env_file:` pointing at a file that is not in
+the repository is the thing that silently does nothing.
+
+**A long image pull can strand half a stack.** Compose waits for
+`depends_on: condition: service_healthy`, and that wait has a deadline set by
+the healthcheck's own `retries × interval`. A dependency that is slow on first
+boot — a message queue initialising its data directory, say — can exceed it.
+Compose then logs one line for that container and stops, leaving every service
+that depended on it in `Created`: built, configured, never started. `docker ps`
+shows them as neither up nor failed.
+
+The fix is a `start_period` on the slow service's healthcheck, which excludes
+first-boot time from the retry budget. The recovery, once it is already
+healthy, is to start the stranded containers in dependency order.
+
 ## 11. Per-service bootstrap
 
 Things that are not expressible in a compose file:
@@ -291,6 +344,16 @@ Things that are not expressible in a compose file:
   directory from a previous installation if the file ownership matches the
   uid the container runs as. Check the uid before assuming a chown is needed:
   it is frequently *not* the host admin's uid.
+- **Configuration generated from environment variables is usually additive.**
+  An application that renders its config file from the environment on each
+  start typically *writes* keys and never removes them. Deleting a variable
+  from the compose file then changes nothing, because the value it wrote last
+  time is still in the config file on disk. Set the opposite value explicitly
+  instead of removing the line.
+- **A copy of a repository, or any other data directory, is a snapshot.**
+  Making one and then continuing to edit the original is a reliable way to
+  spend an afternoon wondering why the application shows stale content. Decide
+  which copy is authoritative and delete or rename the other.
 
 ## 12. Backups
 
@@ -300,11 +363,17 @@ What is actually irreplaceable, in order:
    inside the container, not by copying files out from under a running server.
 2. **Bind-mounted data directories.** Owned by a container uid, so reading
    them from the host needs `sudo` or a throwaway container.
-3. **The Portainer data volume.** It holds the stack definitions *and*,
-   because nginx-proxy-manager uses a relative bind mount, the proxy host
-   configuration and the Let's Encrypt account. Losing it means re-entering
-   every proxy host by hand.
-4. **This repository.** Already off-site if you push it.
+3. **The Portainer data volume** — the stack definitions and each stack's
+   `stack.env`, which is where every secret you typed into the UI actually
+   lives.
+4. **The reverse proxy's own data.** Check where it really is before trusting
+   a backup of it: a stack that bind-mounts a relative path like `./data`
+   does *not* store it in the Portainer volume. The daemon resolves that path
+   on the host, so it lands in `/data/compose/<stack-id>/data`, root-owned,
+   nowhere near the checkout. That directory holds the proxy host database
+   and the certificate account; losing it means re-entering every proxy host
+   by hand.
+5. **This repository.** Already off-site if you push it.
 
 Ship them somewhere that is not this machine. A dump written to the same RAID
 array as the database protects against exactly one failure mode: your own
