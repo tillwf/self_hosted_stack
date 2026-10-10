@@ -1,0 +1,223 @@
+# Adapted from Meelo's own docker-compose.prod.yml, with three changes:
+#
+#   1. No env_file. Portainer's repository deployment does not create
+#      stack.env — its own UI says the file "must already reside in the Git
+#      repo" — so every value arrives as a ${VAR} substitution from the stack
+#      environment and has to be listed explicitly below.
+#   2. No published port. `nginx` joins npm_default and is reached by
+#      nginx-proxy-manager as http://meelo:5000, so nothing is exposed on the
+#      host's public interface.
+#   3. Image tags pinned, as everywhere else in this repository.
+#
+# Upstream: https://github.com/Arthi-chaud/Meelo
+services:
+  # Meelo's own router: serves the front end at / and proxies /api, /scanner
+  # and /matcher to the respective services. This is the single entry point —
+  # point the reverse proxy here and nowhere else.
+  nginx:
+    image: nginx:1.31.3-alpine
+    restart: on-failure
+    depends_on:
+      server:
+        condition: service_started
+      front:
+        condition: service_started
+    expose:
+      - 5000
+    environment:
+      - PORT=5000
+      - FRONT_URL=http://front:3000
+      - SERVER_URL=http://server:4000
+      - SCANNER_URL=http://scanner:8133
+      - MATCHER_URL=http://matcher:6789
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/meelo.conf.template:ro
+    networks:
+      default: {}
+      npm_default:
+        # "nginx" is too generic to claim on a shared network; the proxy host
+        # forwards to this alias instead.
+        aliases:
+          - meelo
+
+  server:
+    image: arthichaud/meelo-server:${TAG}
+    init: true
+    restart: on-failure
+    expose:
+      - 4000
+    depends_on:
+      db:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+      mq:
+        condition: service_healthy
+    volumes:
+      - ${DATA_DIR}:${INTERNAL_DATA_DIR}
+      - ${CONFIG_DIR}:${INTERNAL_CONFIG_DIR}
+    environment:
+      - TRANSCODER_URL=http://transcoder:7666
+      - MEILI_HOST=http://meilisearch:7700
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@mq:5672
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+      - PUBLIC_URL=${PUBLIC_URL}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - JWT_SIGNATURE=${JWT_SIGNATURE}
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - API_KEYS=${API_KEYS}
+      - ALLOW_ANONYMOUS=${ALLOW_ANONYMOUS}
+      - ENABLE_USER_REGISTRATION=${ENABLE_USER_REGISTRATION}
+      - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+      - LASTFM_API_SECRET=${LASTFM_API_SECRET:-}
+      - INTERNAL_DATA_DIR=${INTERNAL_DATA_DIR}
+      - INTERNAL_CONFIG_DIR=${INTERNAL_CONFIG_DIR}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- localhost:4000"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  front:
+    image: arthichaud/meelo-front:${TAG}
+    restart: on-failure
+    expose:
+      - 3000
+    depends_on:
+      server:
+        condition: service_healthy
+      scanner:
+        condition: service_healthy
+    environment:
+      # The PUBLIC_* values are baked into what the browser fetches, so they
+      # must be the external URL, not a container name.
+      - PUBLIC_SERVER_URL=${PUBLIC_URL}/api
+      - SSR_SERVER_URL=http://server:4000
+      - PUBLIC_SCANNER_URL=${PUBLIC_URL}/scanner
+      - SSR_SCANNER_URL=http://scanner:8133
+      - PUBLIC_MATCHER_URL=${PUBLIC_URL}/matcher
+      - SSR_MATCHER_URL=http://matcher:6789
+
+  scanner:
+    image: arthichaud/meelo-scanner:${TAG}
+    restart: on-failure
+    expose:
+      - 8133
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - API_URL=http://server:4000
+      - API_KEYS=${API_KEYS}
+      - INTERNAL_CONFIG_DIR=${INTERNAL_CONFIG_DIR}
+      - INTERNAL_DATA_DIR=${INTERNAL_DATA_DIR}
+    volumes:
+      - ${DATA_DIR}:${INTERNAL_DATA_DIR}:ro
+      - ${CONFIG_DIR}:${INTERNAL_CONFIG_DIR}:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- localhost:8133"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  matcher:
+    image: arthichaud/meelo-matcher:${TAG}
+    restart: on-failure
+    expose:
+      - 6789
+    depends_on:
+      server:
+        condition: service_healthy
+      mq:
+        condition: service_healthy
+    environment:
+      - API_URL=http://server:4000
+      - API_KEYS=${API_KEYS}
+      - INTERNAL_CONFIG_DIR=${INTERNAL_CONFIG_DIR}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@mq:5672
+    volumes:
+      - ${CONFIG_DIR}:${INTERNAL_CONFIG_DIR}:ro
+
+  db:
+    # Upstream says postgres:alpine3.14, which floats across Postgres majors —
+    # the failure mode this repository pins against. 16 is current-stable and
+    # the volume is empty, so this is a free choice made once; changing the
+    # major later needs a dump and restore, not a tag bump.
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.5
+    restart: on-failure
+    expose:
+      - 7700
+    environment:
+      - MEILI_ENV=production
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - MEILI_LOG_LEVEL=WARN
+    volumes:
+      - search:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--spider", "http://0.0.0.0:7700/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  transcoder:
+    image: ghcr.io/zoriya/kyoo_transcoder:5.2.1
+    restart: on-failure
+    cpus: 1
+    expose:
+      - 7666
+    environment:
+      - GOCODER_SAFE_PATH=${INTERNAL_DATA_DIR}
+      - PGUSER=${POSTGRES_USER}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB}
+      - PGHOST=db
+      - PGPORT=5432
+    volumes:
+      - ${DATA_DIR}:${INTERNAL_DATA_DIR}:ro
+      - transcoder_cache:/cache
+    depends_on:
+      db:
+        condition: service_healthy
+
+  mq:
+    image: rabbitmq:4.3-alpine
+    restart: always
+    hostname: meelo-mq
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  db:
+  search:
+  transcoder_cache:
+  rabbitmq_data:
+
+networks:
+  default: {}
+  npm_default:
+    external: true

@@ -88,6 +88,46 @@ docker run --rm -v forgejo_forgejo:/d:ro -v "$HOME/nc-backup":/b \
   busybox tar czf /b/forgejo-$(date +%Y%m%dT%H%M%S).tar.gz -C /d .
 ```
 
+## Meelo: music server
+
+Nine services — front end, API server, scanner, matcher, Postgres, Meilisearch,
+RabbitMQ, a transcoder, and an nginx that stitches the first four together.
+Adapted from upstream's `docker-compose.prod.yml`.
+
+### Why this differs from upstream's compose
+
+- **No `env_file`.** Portainer's repository deployment does not generate
+  `stack.env`; its own dialog says the file must already be in the repo.
+  Values typed into the stack environment are only available as `${VAR}`
+  substitutions, so every variable upstream passes via `.env` is listed
+  explicitly under `environment:` instead.
+- **No published port.** `nginx` joins `npm_default` under the alias `meelo`,
+  so the proxy host forwards to `http://meelo:5000` and nothing listens on the
+  host's public interface.
+- **Pinned tags**, including Postgres: upstream's `postgres:alpine3.14` floats
+  across majors, which is not recoverable in place.
+
+### Entry point
+
+`nginx` is the only service to point anything at. It serves the front end at
+`/` and proxies `/api`, `/scanner` and `/matcher` to the other services. Those
+paths are also baked into the front end as absolute URLs through `PUBLIC_URL`,
+so that value must be the external address — a container name will load the
+page and then fail every request the browser makes.
+
+### First run
+
+1. Deploy with `ENABLE_USER_REGISTRATION=1`, open the site, create the first
+   account — it becomes the admin.
+2. Set `ENABLE_USER_REGISTRATION=0` in the stack environment and redeploy.
+   Until you do, anyone who reaches the site can sign up.
+3. Trigger a scan from the UI. The first pass over a large library takes a
+   while and the transcoder is capped at one CPU on purpose.
+
+`CONFIG_DIR` holds `settings.json`, which controls how paths are parsed into
+artist/album/track. The regexes there have to match the library's directory
+layout or the scan finds nothing.
+
 ## Image versions are pinned on purpose
 
 Every image tag in this repository is pinned to a specific release. Floating
