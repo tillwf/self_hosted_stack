@@ -1,0 +1,11 @@
+# The config has to be baked into an image rather than bind-mounted.
+#
+# Portainer runs compose from inside its own container, where this stack is
+# checked out at /data/compose/<id>/meelo. The Docker daemon resolves bind
+# mount sources against the *host* filesystem, where that path does not exist,
+# so a relative mount silently becomes an empty directory and nginx falls back
+# to its default config. Build contexts are read by the compose client, so
+# they do work — the same reason the Nextcloud stack builds its image here.
+FROM nginx:1.31.3-alpine
+
+COPY nginx.conf.template /etc/nginx/templates/meelo.conf.template

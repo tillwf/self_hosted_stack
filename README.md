@@ -107,6 +107,20 @@ Adapted from upstream's `docker-compose.prod.yml`.
 - **Pinned tags**, including Postgres: upstream's `postgres:alpine3.14` floats
   across majors, which is not recoverable in place.
 
+### Relative bind mounts do not work here
+
+Upstream mounts `./nginx.conf.template` into the nginx container. Under
+Portainer that silently produces an empty directory: compose runs inside the
+Portainer container, where the stack is checked out at
+`/data/compose/<id>/meelo`, but the Docker daemon resolves bind sources
+against the *host* filesystem, where nothing is at that path. nginx then finds
+no template, serves its default config on port 80, and the proxy returns 502.
+
+Build contexts are read by the compose client rather than the daemon, so they
+do work — `Dockerfile.nginx` bakes the template into the image instead. The
+same applies to any other file a stack in this repository wants to mount from
+its own directory.
+
 ### Entry point
 
 `nginx` is the only service to point anything at. It serves the front end at

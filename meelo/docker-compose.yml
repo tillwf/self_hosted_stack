@@ -15,7 +15,11 @@ services:
   # and /matcher to the respective services. This is the single entry point —
   # point the reverse proxy here and nowhere else.
   nginx:
-    image: nginx:1.31.3-alpine
+    # Built, not pulled: see Dockerfile.nginx for why the config cannot be a
+    # bind mount under Portainer.
+    build:
+      context: .
+      dockerfile: ./Dockerfile.nginx
     restart: on-failure
     depends_on:
       server:
@@ -30,8 +34,6 @@ services:
       - SERVER_URL=http://server:4000
       - SCANNER_URL=http://scanner:8133
       - MATCHER_URL=http://matcher:6789
-    volumes:
-      - ./nginx.conf.template:/etc/nginx/templates/meelo.conf.template:ro
     networks:
       default: {}
       npm_default:
