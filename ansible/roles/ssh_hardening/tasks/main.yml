@@ -1,0 +1,31 @@
+---
+# When sshd is socket-activated the Port directive in sshd_config is ignored
+# and the listener is defined by the socket unit instead. Rather than silently
+# configuring a port that never takes effect, stop and say so.
+- name: Check whether sshd is socket-activated
+  ansible.builtin.command: systemctl is-enabled ssh.socket
+  register: ssh_socket_state
+  changed_when: false
+  failed_when: false
+
+- name: Refuse to continue against a socket-activated sshd
+  ansible.builtin.fail:
+    msg: >-
+      ssh.socket is enabled, so sshd ignores the Port directive. Either
+      disable it (systemctl disable --now ssh.socket && systemctl enable --now
+      ssh.service) or set the port with a drop-in on the socket unit.
+  when: ssh_socket_state.stdout == "enabled"
+
+- name: Install the hardening drop-in
+  ansible.builtin.template:
+    src: 10-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+# The handler restarts sshd, which drops nothing: existing sessions survive a
+# restart. The next *new* connection must use ssh_port, so update ansible_port
+# in the inventory now if you have not already.

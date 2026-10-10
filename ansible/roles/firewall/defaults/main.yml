@@ -1,0 +1,8 @@
+---
+# 80 and 443 are not configurable: Let's Encrypt validates over 80 and
+# browsers speak 443.
+firewall_base_tcp_ports:
+  - 80
+  - 443
+
+firewall_extra_tcp_ports: []

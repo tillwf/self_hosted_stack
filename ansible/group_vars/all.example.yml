@@ -1,0 +1,31 @@
+---
+# Copy to group_vars/all.yml and edit. all.yml is gitignored.
+# Nothing here is a secret, but the port numbers describe the attack surface
+# of a specific machine, so they stay out of the repository.
+
+# The unprivileged account that owns the stacks and is in the docker group.
+admin_user: deploy
+
+# Public key installed for that account. Path is on the machine running
+# Ansible, not on the server.
+admin_public_key_file: ~/.ssh/id_ed25519.pub
+
+# Port sshd will listen on after hardening. Pick your own; anything above 1024
+# that nothing else wants. Changing this later means updating ansible_port in
+# the inventory at the same time, or the next run cannot connect.
+ssh_port: 22022
+
+# Extra inbound TCP ports to open, beyond ssh_port, 80 and 443. Use this for
+# ports that stacks publish directly — git-over-SSH, for instance. Anything
+# reached through the reverse proxy needs nothing here.
+firewall_extra_tcp_ports: []
+
+# Host clock. Keep containers and databases on one timezone and localise in
+# the application instead.
+timezone: Etc/UTC
+
+# This repository, cloned onto the server so Portainer can be brought up by
+# hand before it can manage anything.
+stack_repo_url: https://github.com/<YOUR_GITHUB_USER>/<THIS_REPO>.git
+stack_repo_version: main
+stack_checkout_path: "/home/{{ admin_user }}/stack"

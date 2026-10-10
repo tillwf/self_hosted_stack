@@ -1,0 +1,11 @@
+# Managed by Ansible — roles/ssh_hardening. Local edits are overwritten.
+#
+# Ubuntu includes this directory from the top of sshd_config and the first
+# occurrence of a keyword wins, so these values override the stock ones.
+
+Port {{ ssh_port }}
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowUsers {{ admin_user }}

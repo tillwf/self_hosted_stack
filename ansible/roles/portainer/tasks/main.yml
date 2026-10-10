@@ -1,0 +1,31 @@
+---
+# Portainer is the one stack not managed by Portainer: it cannot recreate its
+# own container while it is the thing being replaced. So the repository is
+# cloned onto the host and this stack is brought up with the Compose CLI.
+- name: Clone the stack repository
+  ansible.builtin.git:
+    repo: "{{ stack_repo_url }}"
+    dest: "{{ stack_checkout_path }}"
+    version: "{{ stack_repo_version }}"
+    update: true
+  become: true
+  become_user: "{{ admin_user }}"
+
+- name: Bring up the Portainer stack
+  ansible.builtin.command:
+    cmd: docker compose -p {{ portainer_project }} up -d
+    chdir: "{{ stack_checkout_path }}/portainer"
+  become: true
+  become_user: "{{ admin_user }}"
+  register: portainer_up
+  changed_when: >-
+    'Started' in portainer_up.stderr
+    or 'Created' in portainer_up.stderr
+    or 'Recreated' in portainer_up.stderr
+
+- name: Explain the initialisation window
+  ansible.builtin.debug:
+    msg: >-
+      Portainer is up. Open its HTTPS port and create the admin user now —
+      the initialisation window closes a few minutes after first start, and
+      reopening it means restarting the container.

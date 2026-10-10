@@ -1,0 +1,35 @@
+---
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: Default deny inbound
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Default allow outbound
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+# Allowed before sshd moves there, so the port is reachable the moment it
+# starts listening.
+- name: Allow the SSH port
+  community.general.ufw:
+    rule: allow
+    port: "{{ ssh_port }}"
+    proto: tcp
+    comment: ssh
+
+- name: Allow web and any extra published ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ firewall_base_tcp_ports + firewall_extra_tcp_ports }}"
+
+- name: Enable ufw
+  community.general.ufw:
+    state: enabled

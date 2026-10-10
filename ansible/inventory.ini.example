@@ -1,0 +1,12 @@
+# Copy to inventory.ini and fill in. inventory.ini is gitignored: it holds the
+# server address and the port you chose, neither of which belongs in git.
+#
+# ansible_port is the SSH port Ansible connects *on*, which is not necessarily
+# the port you are configuring. On a fresh OVH box it is still the default;
+# after the ssh_hardening role has run once, it is ssh_port from group_vars.
+
+[selfhosted]
+server ansible_host=<SERVER_IP> ansible_port=<CURRENT_SSH_PORT>
+
+[selfhosted:vars]
+ansible_user=<ADMIN_USER>

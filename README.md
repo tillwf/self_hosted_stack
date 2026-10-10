@@ -6,6 +6,10 @@ Portainer tracks the `main` branch of this repository and checks each stack's
 source of truth** — editing the files Portainer checked out gets overwritten on
 the next redeploy.
 
+Rebuilding the whole thing from a blank server is documented in
+[SETUP.md](SETUP.md), with the host-level part automated in
+[`ansible/`](ansible/).
+
 | Directory | Portainer stack | Deployed from | Notes |
 | --- | --- | --- | --- |
 | `nextcloud/` | `nextcloud` (id 2) | **this repo**, `refs/heads/main` | `nc` service is **built locally**, not pulled |

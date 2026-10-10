@@ -1,0 +1,9 @@
+---
+timezone: Etc/UTC
+
+base_packages:
+  - ca-certificates
+  - curl
+  - git
+  - gnupg
+  - unattended-upgrades

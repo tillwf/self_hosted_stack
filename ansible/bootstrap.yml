@@ -1,0 +1,37 @@
+---
+# Run once, against a freshly provisioned box, while root still accepts your
+# key and sshd is still on the default port:
+#
+#   ansible-playbook -i inventory.ini bootstrap.yml -e ansible_user=root
+#
+# It only creates the admin account. Hardening happens in site.yml, from that
+# account, so that a mistake in the sshd config cannot lock out the user that
+# would have to fix it.
+- name: Create the administrative account
+  hosts: selfhosted
+  gather_facts: true
+
+  tasks:
+    - name: Ensure the admin user exists
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+        state: present
+
+    - name: Install the admin public key
+      ansible.posix.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ lookup('ansible.builtin.file', admin_public_key_file) }}"
+        state: present
+        exclusive: false
+
+    - name: Report what to do next
+      ansible.builtin.debug:
+        msg: >-
+          Admin account ready. Set a password with
+          'passwd {{ admin_user }}' on the console — sudo and OVH KVM rescue
+          both need one — then point ansible_user at {{ admin_user }} and run
+          site.yml.
