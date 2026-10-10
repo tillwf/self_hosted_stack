@@ -6,3 +6,9 @@ firewall_base_tcp_ports:
   - 443
 
 firewall_extra_tcp_ports: []
+
+# The port Ansible is currently connected on. Kept open alongside ssh_port for
+# the duration of the transition: if ssh_hardening fails after ufw is already
+# enforcing, allowing only the new port would leave no way back in. Drop the
+# old rule by hand once a fresh connection on ssh_port is confirmed.
+firewall_keep_current_ssh_port: true

@@ -198,6 +198,11 @@ Install the daily run with `crontab -e`:
 17 4 * * * /usr/bin/python3 $HOME/self_hosted_stack/scripts/forgejo-mirror-github.py >> $HOME/logs/forgejo-mirror.log 2>&1
 ```
 
+The script exits `0` when it had nothing to do or created everything, `1` on
+transient failures worth retrying tomorrow, and `2` when the token or
+configuration is wrong — the case where tomorrow's run fails identically and
+the log needs reading.
+
 Mirrors are read-only in Forgejo — pushing to them is rejected, because the
 next sync would discard the commits. Push to GitHub and let the mirror follow.
 A repository that should be writable in Forgejo must not be a mirror; keep it

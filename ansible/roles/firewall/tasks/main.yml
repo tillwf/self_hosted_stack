@@ -30,6 +30,19 @@
     proto: tcp
   loop: "{{ firewall_base_tcp_ports + firewall_extra_tcp_ports }}"
 
+# Without this, enabling ufw while sshd is still on the old port means the
+# only way in is the session Ansible is already holding. Established
+# connections survive, new ones do not.
+- name: Allow the port Ansible is connected on, for the transition
+  community.general.ufw:
+    rule: allow
+    port: "{{ ansible_port | default(22) }}"
+    proto: tcp
+    comment: ssh (pre-hardening, remove once ssh_port is verified)
+  when:
+    - firewall_keep_current_ssh_port
+    - (ansible_port | default(22)) | int != ssh_port | int
+
 - name: Enable ufw
   community.general.ufw:
     state: enabled

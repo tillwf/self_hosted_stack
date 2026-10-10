@@ -10,6 +10,25 @@
   hosts: selfhosted
   gather_facts: true
 
+  # Checked before any role runs. ssh_hardening would otherwise discover this
+  # only after the firewall role has enabled ufw, which is the worst possible
+  # moment to abort a play that is about to move the SSH port.
+  pre_tasks:
+    - name: Check whether sshd is socket-activated
+      ansible.builtin.command: systemctl is-enabled ssh.socket
+      register: ssh_socket_state
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse to continue against a socket-activated sshd
+      ansible.builtin.fail:
+        msg: >-
+          ssh.socket is enabled, so sshd ignores the Port directive. Either
+          disable it (systemctl disable --now ssh.socket && systemctl enable
+          --now ssh.service) or set the port with a drop-in on the socket
+          unit. Nothing has been changed.
+      when: ssh_socket_state.stdout == "enabled"
+
   roles:
     - role: base
     - role: firewall

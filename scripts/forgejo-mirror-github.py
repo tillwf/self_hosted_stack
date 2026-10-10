@@ -20,6 +20,12 @@ lines (default ~/.config/forgejo-mirror.env, mode 0600):
     GITHUB_TOKEN       optional; only raises the API rate limit
     MIRROR_INTERVAL    optional, default 24h
     INCLUDE_FORKS      optional, default 0
+
+Exit codes, so a cron wrapper can tell the cases apart:
+
+    0  nothing to do, or everything created
+    1  transient trouble — some repositories failed, try again tomorrow
+    2  configuration or authentication is wrong; retrying will not help
 """
 
 import json
@@ -45,16 +51,54 @@ def load_env_file(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
-def api(url: str, token: str | None = None, scheme: str = "token", data: dict | None = None) -> object:
+class AuthProblem(Exception):
+    """A 401/403: the token is wrong, expired or under-scoped.
+
+    Distinct from a per-repository failure because retrying it, or carrying on
+    to the next repository, only produces the same error once per repository.
+    """
+
+
+def api(
+    url: str,
+    token: str | None = None,
+    scheme: str = "token",
+    data: dict | None = None,
+    attempts: int = 3,
+) -> object:
+    """One API call, retrying only what is worth retrying.
+
+    429 and 5xx are the server asking for patience, and 429 usually says how
+    long for. Everything else — 401, 403, 409, 422 — will fail identically on
+    a second attempt, so it is raised at once.
+    """
     body = json.dumps(data).encode() if data is not None else None
-    request = urllib.request.Request(url, data=body, method="POST" if body else "GET")
-    request.add_header("Accept", "application/json")
-    if body:
-        request.add_header("Content-Type", "application/json")
-    if token:
-        request.add_header("Authorization", f"{scheme} {token}")
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read() or "null")
+
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(url, data=body, method="POST" if body else "GET")
+        request.add_header("Accept", "application/json")
+        if body:
+            request.add_header("Content-Type", "application/json")
+        if token:
+            request.add_header("Authorization", f"{scheme} {token}")
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read() or "null")
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                raise AuthProblem(f"{error.code} for {url}: {error.read().decode()[:200]}") from error
+            retryable = error.code == 429 or 500 <= error.code < 600
+            if not retryable or attempt == attempts:
+                raise
+            delay = error.headers.get("Retry-After")
+            wait = int(delay) if delay and delay.isdigit() else 5 * attempt
+        except (urllib.error.URLError, TimeoutError, OSError):
+            if attempt == attempts:
+                raise
+            wait = 5 * attempt
+        time.sleep(wait)
+
+    raise RuntimeError("unreachable")
 
 
 def github_repos(user: str, token: str | None, include_forks: bool) -> list[dict]:
@@ -96,27 +140,6 @@ def forgejo_repos(base: str, token: str, owner: str) -> set[str]:
     return names
 
 
-def migrate_with_retry(base: str, token: str, payload: dict, attempts: int = 3) -> None:
-    """Create one mirror, retrying the failures that are worth retrying.
-
-    429 and 5xx are the server asking for patience. Everything else — 409
-    because it already exists, 422 because the clone address is bad — will
-    fail identically on a second try, so it is raised immediately.
-    """
-    for attempt in range(1, attempts + 1):
-        try:
-            api(f"{base}/api/v1/repos/migrate", token, data=payload)
-            return
-        except urllib.error.HTTPError as error:
-            retryable = error.code == 429 or 500 <= error.code < 600
-            if not retryable or attempt == attempts:
-                raise
-        except (urllib.error.URLError, TimeoutError, OSError):
-            if attempt == attempts:
-                raise
-        time.sleep(5 * attempt)
-
-
 def main() -> int:
     load_env_file(ENV_FILE)
 
@@ -133,8 +156,15 @@ def main() -> int:
     include_forks = os.environ.get("INCLUDE_FORKS", "0") == "1"
     github_token = os.environ.get("GITHUB_TOKEN") or None
 
-    wanted = github_repos(github_user, github_token, include_forks)
-    existing = forgejo_repos(base, token, owner)
+    try:
+        wanted = github_repos(github_user, github_token, include_forks)
+        existing = forgejo_repos(base, token, owner)
+    except AuthProblem as error:
+        print(f"authentication failed, nothing attempted: {error}", file=sys.stderr)
+        return 2
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as error:
+        print(f"could not list repositories: {type(error).__name__} {error}", file=sys.stderr)
+        return 1
 
     created, failed, skipped = [], [], 0
     for repo in sorted(wanted, key=lambda r: r["name"].lower()):
@@ -158,11 +188,20 @@ def main() -> int:
             "releases": False,
         }
         try:
-            migrate_with_retry(base, token, payload)
+            api(f"{base}/api/v1/repos/migrate", token, data=payload)
             created.append(repo["name"])
+        except AuthProblem as error:
+            # The token cannot create repositories. Every remaining repository
+            # would fail the same way, one log line each.
+            print(f"aborting: Forgejo rejected the token: {error}", file=sys.stderr)
+            return 2
         except urllib.error.HTTPError as error:
-            detail = error.read().decode()[:200]
-            failed.append(f"{repo['name']}: HTTP {error.code} {detail}")
+            if error.code == 409:
+                # Created between listing and now, by an overlapping run or by
+                # hand. The desired state exists, which is all this asked for.
+                skipped += 1
+                continue
+            failed.append(f"{repo['name']}: HTTP {error.code} {error.read().decode()[:200]}")
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             # One flaky socket must not cost the rest of the nightly run.
             failed.append(f"{repo['name']}: {type(error).__name__} {error}")

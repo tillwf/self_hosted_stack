@@ -1,7 +1,8 @@
 ---
-# When sshd is socket-activated the Port directive in sshd_config is ignored
-# and the listener is defined by the socket unit instead. Rather than silently
-# configuring a port that never takes effect, stop and say so.
+# site.yml checks for socket activation in pre_tasks, before the firewall role
+# runs — a sshd that ignores the Port directive has to abort the play *before*
+# ufw starts enforcing, not after. The check is repeated here so the role is
+# still safe if it is ever run on its own.
 - name: Check whether sshd is socket-activated
   ansible.builtin.command: systemctl is-enabled ssh.socket
   register: ssh_socket_state
