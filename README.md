@@ -13,15 +13,37 @@ Rebuilding the whole thing from a blank server is documented in
 | Directory | Portainer stack | Deployed from | Notes |
 | --- | --- | --- | --- |
 | `nextcloud/` | `nextcloud` (id 2) | **this repo**, `refs/heads/main` | `nc` service is **built locally**, not pulled |
+| `forgejo/` | `forgero` (id 39) | **this repo**, `refs/heads/main` | Private git. On `npm_default`, no published HTTP port. Stack name is a typo, kept to avoid a rename |
+| `meelo/` | `meelo` (id 40) | **this repo**, `refs/heads/main` | Music server, nine services behind its own nginx, also on `npm_default` |
 | `joplin/` | `joplin` (id 15) | Portainer web editor | repo copy is a mirror, see below |
 | `nginx-proxy-manager/` | `npm` (id 14) | Portainer web editor | repo copy is a mirror, see below |
 | `portainer/` | n/a | **this repo**, via `docker compose` on the host | Portainer cannot deploy itself |
 
-Only the `nextcloud` stack is a git-backed Portainer stack, so it is the only
-one Portainer redeploys from this repository. `joplin` and `npm` were created
-through Portainer's web editor, and their compose files here are kept in sync
-by hand as documentation — editing them does **not** deploy anything. Change
-those two through Portainer (or its API), then mirror the change here.
+`nextcloud`, `forgero` and `meelo` are git-backed Portainer stacks: Portainer
+clones this repository and checks out that stack's `docker-compose.yml`, so
+editing the checkout is pointless and **Pull and redeploy** is what applies a
+commit. `joplin` and `npm` predate that and were pasted into Portainer's web
+editor; the copies here are documentation, not the deployed source, and
+changing them changes nothing until those stacks are converted.
+
+### Where the data of the two web-editor stacks actually lives
+
+Both use *relative* bind mounts — `./data` for nginx-proxy-manager,
+`./data/postgres` for Joplin. Portainer runs compose inside its own container,
+but the Docker daemon resolves bind sources on the **host**, so those paths
+land in a directory named after the stack's numeric id:
+
+    /data/compose/14/data              nginx-proxy-manager: proxy hosts, certs account
+    /data/compose/15/data/postgres     Joplin: 2.4 GB of Postgres data
+
+This works today and keeps working across redeploys, because the id is
+stable. It breaks the day a stack is deleted and recreated — the new id means
+a new, empty directory, and the application starts as if it were new while
+the old data sits orphaned under the previous id. It also means a backup of
+the Portainer volume does **not** contain any of it.
+
+Converting those two to absolute host paths is a data move plus downtime, so
+it has not been done. Do it before deleting either stack for any reason.
 
 They cannot simply be converted to git-backed stacks: both use relative bind
 mounts (`./data`), which the Docker daemon resolves against the stack's working
@@ -84,9 +106,13 @@ One major at a time; the database migration on first start is not reversible.
 Snapshot the volume before bumping the tag:
 
 ```bash
-docker run --rm -v forgejo_forgejo:/d:ro -v "$HOME/nc-backup":/b \
+docker run --rm -v /home/till/gitea:/d:ro -v "$HOME/nc-backup":/b \
   busybox tar czf /b/forgejo-$(date +%Y%m%dT%H%M%S).tar.gz -C /d .
 ```
+
+(The data directory is the bind mount, not a named volume — an earlier version
+of this file said `forgejo_forgejo`, which does not exist and would have
+produced an empty archive right before an irreversible upgrade.)
 
 ## Meelo: music server
 

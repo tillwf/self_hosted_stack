@@ -25,6 +25,7 @@ lines (default ~/.config/forgejo-mirror.env, mode 0600):
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -74,15 +75,46 @@ def github_repos(user: str, token: str | None, include_forks: bool) -> list[dict
     ]
 
 
-def forgejo_repos(base: str, token: str) -> set[str]:
+def forgejo_repos(base: str, token: str, owner: str) -> set[str]:
+    """Names already present *under owner*.
+
+    /user/repos also returns repositories the token can merely see — other
+    owners', or ones shared through a team. Matching on bare names would then
+    skip creating owner/foo because somebody-else/foo exists.
+    """
     names, page = set(), 1
     while True:
         batch = api(f"{base}/api/v1/user/repos?limit=50&page={page}", token)
         if not batch:
             break
-        names.update(r["name"].lower() for r in batch)
+        names.update(
+            r["name"].lower()
+            for r in batch
+            if r["owner"]["login"].lower() == owner.lower()
+        )
         page += 1
     return names
+
+
+def migrate_with_retry(base: str, token: str, payload: dict, attempts: int = 3) -> None:
+    """Create one mirror, retrying the failures that are worth retrying.
+
+    429 and 5xx are the server asking for patience. Everything else — 409
+    because it already exists, 422 because the clone address is bad — will
+    fail identically on a second try, so it is raised immediately.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            api(f"{base}/api/v1/repos/migrate", token, data=payload)
+            return
+        except urllib.error.HTTPError as error:
+            retryable = error.code == 429 or 500 <= error.code < 600
+            if not retryable or attempt == attempts:
+                raise
+        except (urllib.error.URLError, TimeoutError, OSError):
+            if attempt == attempts:
+                raise
+        time.sleep(5 * attempt)
 
 
 def main() -> int:
@@ -102,7 +134,7 @@ def main() -> int:
     github_token = os.environ.get("GITHUB_TOKEN") or None
 
     wanted = github_repos(github_user, github_token, include_forks)
-    existing = forgejo_repos(base, token)
+    existing = forgejo_repos(base, token, owner)
 
     created, failed, skipped = [], [], 0
     for repo in sorted(wanted, key=lambda r: r["name"].lower()):
@@ -126,11 +158,14 @@ def main() -> int:
             "releases": False,
         }
         try:
-            api(f"{base}/api/v1/repos/migrate", token, data=payload)
+            migrate_with_retry(base, token, payload)
             created.append(repo["name"])
         except urllib.error.HTTPError as error:
             detail = error.read().decode()[:200]
             failed.append(f"{repo['name']}: HTTP {error.code} {detail}")
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            # One flaky socket must not cost the rest of the nightly run.
+            failed.append(f"{repo['name']}: {type(error).__name__} {error}")
 
     print(
         f"github={len(wanted)} already-mirrored={skipped} "

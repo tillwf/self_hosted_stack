@@ -219,9 +219,13 @@ getent hosts cloud.example.com
 ## 9. nginx-proxy-manager
 
 Deploy it from Portainer as a git-backed stack (see [§10](#10-the-remaining-stacks)),
-with the compose path `nginx-proxy-manager/docker-compose.yml`. It needs its
-database credentials supplied as stack environment variables, following
-`nginx-proxy-manager/.env.template`.
+with the compose path `nginx-proxy-manager/docker-compose.yml`.
+
+Check whether its database image actually wants credentials before supplying
+any. The bundled MariaDB in this repository's compose takes none — it is
+reached only over the stack's internal network — so the `.env.template` next
+to it is vestigial and the running containers have no `MYSQL_*` variables
+set.
 
 Then:
 

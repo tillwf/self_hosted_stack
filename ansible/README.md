@@ -38,8 +38,13 @@ one, and so does OVH's KVM rescue.
 Then set `ansible_user` to that account in `inventory.ini` and run:
 
 ```bash
-ansible-playbook site.yml
+ansible-playbook site.yml -K
 ```
+
+`-K` prompts for the sudo password. `ansible.cfg` turns `become` on for every
+task, and the bootstrap deliberately leaves the admin account with a password
+rather than passwordless sudo, so without `-K` every privileged task fails.
+Drop the flag only if you grant that account `NOPASSWD` sudo.
 
 **After the first `site.yml`, update `ansible_port` in `inventory.ini` to
 `ssh_port`.** Until you do, the next run connects to the old port and fails.
