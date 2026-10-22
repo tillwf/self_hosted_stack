@@ -4,9 +4,6 @@ services:
       context: .
       dockerfile: ./Dockerfile
     restart: always
-    ports:
-      - 8081:443
-      - 8080:80
     volumes:
       - nextcloud:/var/www/html
       - /home/till/nextcloud_data:/var/www/html/data
@@ -15,6 +12,7 @@ services:
     networks:
       - redisnet
       - dbnet
+      - npm
     environment:
       - REDIS_HOST=redis
       - MYSQL_HOST=db
@@ -91,3 +89,10 @@ volumes:
 networks:
   dbnet:
   redisnet:
+  # nginx-proxy-manager network. Nextcloud joins it so NPM can reach this
+  # container by name (http://nc:80) instead of hairpinning out through the
+  # public IP. That is why no ports are published on the nc service: nothing
+  # needs to be reachable from the host or the internet directly.
+  npm:
+    external: true
+    name: npm_default

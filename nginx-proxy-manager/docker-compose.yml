@@ -9,12 +9,14 @@ services:
     image: 'jc21/nginx-proxy-manager:2.12.1'
     container_name: nginx_proxy_app
     restart: unless-stopped
-    # All three are load-bearing: nginx-proxy-manager forwards every proxy host
-    # to this server's public IP, and 81 serves the admin UI behind npm.till.wf.
+    # Only 80 and 443 are published. 81 is the admin UI, and publishing it put
+    # that login on the public IP over plain HTTP, so the password crossed the
+    # network in the clear. It is now reached only through npm.till.wf, which
+    # terminates TLS and proxies to 127.0.0.1:81 inside this same container —
+    # the admin port never leaves it.
     ports:
       - '443:443'
       - '80:80'
-      - '81:81'
     volumes:
       - ./data:/data
       - letsencrypt:/etc/letsencrypt

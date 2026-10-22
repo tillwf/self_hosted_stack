@@ -8,9 +8,24 @@ services:
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
             - portainer_data:/data
-        ports:
-            - "9443:9443"
-            # 8000 is the Edge agent tunnel. Published on 8888 to keep 8000 free.
-            - "8888:8000"
+        # Nothing is published. nginx-proxy-manager reaches the UI over the
+        # shared npm network as http://portainer:9000 — plain HTTP is fine on an
+        # internal docker network, and it avoids the self-signed cert that 9443
+        # serves. Publishing 9443 put an admin UI with access to the Docker
+        # socket, which is root-equivalent on this host, straight on the public
+        # internet.
+        #
+        # 8000 is the Edge agent tunnel, previously published on 8888. It is
+        # only needed if an Edge agent connects from off this host; publish it
+        # again deliberately if that ever becomes true.
+        networks:
+            default: {}
+            npm:
+                aliases:
+                    - portainer
 volumes:
     portainer_data: {}
+networks:
+    npm:
+        external: true
+        name: npm_default

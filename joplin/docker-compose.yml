@@ -20,10 +20,15 @@ services:
         image: joplin/server:3.0.1-beta
         depends_on:
             - db
-        # Required: nginx-proxy-manager forwards joplin.till.wf to the host's
-        # public IP on 22300, so this publish is load-bearing.
-        ports:
-            - "22300:22300"
+        # No published port. nginx-proxy-manager used to forward joplin.till.wf
+        # to the host's public IP on 22300, which also left Joplin reachable
+        # directly over plain HTTP, bypassing the proxy and its TLS. It now
+        # reaches the app by name over the shared npm network instead.
+        networks:
+            default: {}
+            npm:
+                aliases:
+                    - joplin
         restart: unless-stopped
         environment:
             - APP_PORT=22300
@@ -34,3 +39,7 @@ services:
             - POSTGRES_USER=${POSTGRES_USER}
             - POSTGRES_PORT=5432
             - POSTGRES_HOST=db
+networks:
+    npm:
+        external: true
+        name: npm_default
