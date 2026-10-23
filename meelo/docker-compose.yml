@@ -1,4 +1,4 @@
-# Adapted from Meelo's own docker-compose.prod.yml, with three changes:
+# Adapted from Meelo's own docker-compose.prod.yml, with four changes:
 #
 #   1. No env_file. Portainer's repository deployment does not create
 #      stack.env — its own UI says the file "must already reside in the Git
@@ -8,6 +8,12 @@
 #      nginx-proxy-manager as http://meelo:5000, so nothing is exposed on the
 #      host's public interface.
 #   3. Image tags pinned, as everywhere else in this repository.
+#   4. `restart: unless-stopped` instead of upstream's `on-failure`.
+#      `on-failure` does not restart a container when the Docker daemon
+#      starts, so a host reboot left seven of these nine down until someone
+#      noticed — music.till.wf returning 502 with no other symptom. `db` and
+#      `mq` were already `always` and did come back, which is what made the
+#      failure partial and easy to miss.
 #
 # Upstream: https://github.com/Arthi-chaud/Meelo
 services:
@@ -20,7 +26,7 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile.nginx
-    restart: on-failure
+    restart: unless-stopped
     depends_on:
       server:
         condition: service_started
@@ -45,7 +51,7 @@ services:
   server:
     image: arthichaud/meelo-server:${TAG}
     init: true
-    restart: on-failure
+    restart: unless-stopped
     expose:
       - 4000
     depends_on:
@@ -84,7 +90,7 @@ services:
 
   front:
     image: arthichaud/meelo-front:${TAG}
-    restart: on-failure
+    restart: unless-stopped
     expose:
       - 3000
     depends_on:
@@ -104,7 +110,7 @@ services:
 
   scanner:
     image: arthichaud/meelo-scanner:${TAG}
-    restart: on-failure
+    restart: unless-stopped
     expose:
       - 8133
     depends_on:
@@ -126,7 +132,7 @@ services:
 
   matcher:
     image: arthichaud/meelo-matcher:${TAG}
-    restart: on-failure
+    restart: unless-stopped
     expose:
       - 6789
     depends_on:
@@ -163,7 +169,7 @@ services:
 
   meilisearch:
     image: getmeili/meilisearch:v1.5
-    restart: on-failure
+    restart: unless-stopped
     expose:
       - 7700
     environment:
@@ -180,7 +186,7 @@ services:
 
   transcoder:
     image: ghcr.io/zoriya/kyoo_transcoder:5.2.1
-    restart: on-failure
+    restart: unless-stopped
     cpus: 1
     expose:
       - 7666

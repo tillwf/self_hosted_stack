@@ -43,6 +43,16 @@ services:
             - POSTGRES_USER=${POSTGRES_USER}
             - POSTGRES_PORT=5432
             - POSTGRES_HOST=db
+            # Joplin Server writes a TaskStarted and a TaskCompleted row to
+            # the `events` table for every scheduled task run, with no
+            # retention. That table reached 16.1M rows and 2.3 GB of a 2.4 GB
+            # database before being pruned on 2026-10-23. The heartbeat task
+            # defaults to every minute; hourly drops ~2,900 rows/day. The
+            # other two offenders are hardcoded upstream — ProcessShares runs
+            # every 10s and ProcessEmails every minute — so the table still
+            # grows ~3 MB/day and needs a periodic prune. Only the newest row
+            # per (type, name) is ever read, by the admin tasks page.
+            - HEARTBEAT_MESSAGE_SCHEDULE=0 * * * *
 networks:
     npm:
         external: true
