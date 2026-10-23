@@ -42,6 +42,17 @@ a new, empty directory, and the application starts as if it were new while
 the old data sits orphaned under the previous id. It also means a backup of
 the Portainer volume does **not** contain any of it.
 
+**Never run `docker compose up -d` from this checkout for `joplin` or
+`nginx-proxy-manager`.** Compose resolves a relative bind against the directory
+holding the file, so `./data` becomes `self_hosted_stack/joplin/data` instead of
+`/data/compose/15/data`. The service starts on a brand new empty directory while
+the real data sits untouched where it was. Nothing is deleted, but it presents
+as total data loss, and a Joplin client syncing against the resulting empty
+server can turn it into the real thing. Recover by redeploying the stack from
+Portainer, which restores the correct working directory. Only `nextcloud/` and
+`portainer/` are safe to deploy from the host, because they use absolute paths
+and project-scoped named volumes.
+
 Converting those two to absolute host paths is a data move plus downtime, so
 it has not been done. Do it before deleting either stack for any reason.
 
