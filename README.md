@@ -26,50 +26,46 @@ commit. `joplin` and `npm` predate that and were pasted into Portainer's web
 editor; the copies here are documentation, not the deployed source, and
 changing them changes nothing until those stacks are converted.
 
-### Where the data of the two web-editor stacks actually lives
+### Where the data of the two web-editor stacks lives
 
-Both use *relative* bind mounts — `./data` for nginx-proxy-manager,
-`./data/postgres` for Joplin. Portainer runs compose inside its own container,
-but the Docker daemon resolves bind sources on the **host**, so those paths
-land in a directory named after the stack's numeric id:
+Both use absolute bind mounts:
 
-    /data/compose/14/data              nginx-proxy-manager: proxy hosts, certs account
-    /data/compose/15/data/postgres     Joplin: 2.4 GB of Postgres data
+    /home/till/npm_data              nginx-proxy-manager: proxy hosts, SQLite, nginx configs
+    /home/till/joplin_data/postgres  Joplin: 2.4 GB of Postgres data
 
-This works today and keeps working across redeploys, because the id is
-stable. It breaks the day a stack is deleted and recreated — the new id means
-a new, empty directory, and the application starts as if it were new while
-the old data sits orphaned under the previous id. It also means a backup of
-the Portainer volume does **not** contain any of it.
+Certificates are not in there — they live in the `npm_letsencrypt` named
+volume, which was already stable and was left alone.
 
-**Never run `docker compose up -d` from this checkout for `joplin` or
-`nginx-proxy-manager`.** Compose resolves a relative bind against the directory
-holding the file, so `./data` becomes `self_hosted_stack/joplin/data` instead of
-`/data/compose/15/data`. The service starts on a brand new empty directory while
-the real data sits untouched where it was. Nothing is deleted, but it presents
-as total data loss, and a Joplin client syncing against the resulting empty
-server can turn it into the real thing. Recover by redeploying the stack from
-Portainer, which restores the correct working directory. Only `nextcloud/` and
-`portainer/` are safe to deploy from the host, because they use absolute paths
-and project-scoped named volumes.
+Until 2026-10-23 these were *relative* (`./data`, `./data/postgres`). Compose
+resolves a relative bind against the directory holding the compose file, which
+for a Portainer stack is `/data/compose/<id>` on the host — so the data location
+depended on the stack id, and on who ran compose and from where. Three things
+broke it: deleting and recreating a stack (new id, new empty directory), running
+`docker compose up -d` from this checkout (resolves against the checkout), and
+converting to a git-backed stack (different working directory again). In each
+case the service came up on an empty directory while the real data sat untouched
+elsewhere — indistinguishable from data loss at a glance, and a Joplin client
+syncing against the resulting empty server could have turned it into the real
+thing. Absolute paths remove all three.
 
-Converting those two to absolute host paths is a data move plus downtime, so
-it has not been done. Do it before deleting either stack for any reason.
+The pre-conversion copies are still on disk at `/data/compose/14/data` and
+`/data/compose/15/data`. Delete them once you are confident. Note that a backup
+of the Portainer volume does **not** contain any of this data, before or after.
 
-They cannot simply be converted to git-backed stacks: both use relative bind
-mounts (`./data`), which the Docker daemon resolves against the stack's working
-directory on the host (`/data/compose/14`, `/data/compose/15`). A git-backed
-stack gets a different working directory, so `./data` would resolve to an empty
-path and the services would come up with no configuration, no certificates and
-no database. Converting them requires rewriting those binds to absolute paths
-or named volumes first, and migrating the data.
+Both stacks could now be converted to git-backed stacks if that is ever wanted —
+the relative binds were the only thing preventing it.
 
 `portainer/` is deployed by hand from a checkout on the host at
 `/home/till/self_hosted_stack`, because Portainer cannot recreate its own
 container while it is the thing being replaced.
 
 Each stack reads its secrets from Portainer's stack environment, following the
-corresponding `.env.template`.
+corresponding `.env.template`. There are deliberately no `.env` files on the
+host, so running `docker compose` by hand from this checkout starts containers
+with every one of those variables blank — Portainer is what injects them. That
+is survivable for Nextcloud, which keeps its credentials in `config.php`, but
+not for Joplin, which reads the Postgres password from the environment at
+runtime. Redeploying the stack from Portainer puts the values back.
 
 ## Forgejo: private git
 

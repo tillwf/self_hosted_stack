@@ -2,8 +2,9 @@
 __pycache__/
 *.pyc
 
-# Created only by mistake: running `docker compose up -d` from this checkout
-# for joplin resolves its relative bind against this directory instead of
-# /data/compose/15. See the warning in README.md.
+# Left over from when joplin used a relative bind (`./data/postgres`), which
+# compose resolved against this checkout if run from here. The bind is absolute
+# now, so these cannot reappear, but the orphan from that mistake is still on
+# disk. See README.md.
 joplin/data/
 joplin/data.orphan-*/

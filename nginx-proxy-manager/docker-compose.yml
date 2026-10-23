@@ -17,17 +17,29 @@ services:
     ports:
       - '443:443'
       - '80:80'
+    # Absolute path on purpose. This used to be `./data`, which compose resolves
+    # against whatever directory holds this file — for a Portainer stack that is
+    # /data/compose/<id>. The certificates stay in the `letsencrypt` named
+    # volume, which is already stable. See README.md.
     volumes:
-      - ./data:/data
+      - /home/till/npm_data:/data
       - letsencrypt:/etc/letsencrypt
     depends_on:
       - npm-db
 
   npm-db:
+    # Vestigial. The npm service is given no DB_MYSQL_* environment, so
+    # nginx-proxy-manager falls back to SQLite at /data/database.sqlite, and
+    # that is where the proxy hosts actually live. This MariaDB holds nothing
+    # but its own `mysql` system schema; stopping it leaves every site serving
+    # and the admin UI working. Kept for now only because removing it is a
+    # separate change. The MYSQL_* keys in this stack's Portainer environment
+    # are unused for the same reason.
+    #
     # Pinned to the running version. Note jc21/mariadb-aria publishes no
     # floating minor tag, so 10.11.5 is the only way to pin this.
     image: 'jc21/mariadb-aria:10.11.5'
     container_name: nginx_proxy_db
     restart: unless-stopped
     volumes:
-      - ./data/mysql:/var/lib/mysql
+      - /home/till/npm_data/mysql:/var/lib/mysql

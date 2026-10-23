@@ -3,8 +3,12 @@ services:
         # Pinned to the running version. `postgres:16` floated within the major,
         # and the tag had already moved on, orphaning this container's image.
         image: postgres:16.6
+        # Absolute path on purpose. This used to be `./data/postgres`, which
+        # compose resolves against whatever directory holds this file — for a
+        # Portainer stack that is /data/compose/<id>, so the data location
+        # depended on the stack id and on who ran compose. See README.md.
         volumes:
-            - ./data/postgres:/var/lib/postgresql/data
+            - /home/till/joplin_data/postgres:/var/lib/postgresql/data
         # No published port on purpose. The app reaches the database as
         # POSTGRES_HOST=db over the compose network, and no nginx-proxy-manager
         # host forwards to 5432, so publishing it only exposed Postgres to the
