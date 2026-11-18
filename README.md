@@ -215,6 +215,23 @@ next sync would discard the commits. Push to GitHub and let the mirror follow.
 A repository that should be writable in Forgejo must not be a mirror; keep it
 out of the GitHub account, or accept that the two will diverge.
 
+## Checking the server will survive a reboot
+
+`scripts/preflight-reboot-check.sh` is a read-only audit of everything that
+decides whether a remote machine comes back: bootloader present on every RAID
+member, `grub-pc` install target sane, initramfs able to assemble the root
+array, a fallback kernel still in the menu, `GRUB_RECORDFAIL_TIMEOUT` set so a
+failed boot retries instead of hanging on a console nobody can reach, arrays
+not degraded, SMART clean, every fstab UUID resolvable, and every running
+container set to restart itself.
+
+```bash
+sudo ./scripts/preflight-reboot-check.sh
+```
+
+It exits non-zero on anything it considers a blocker and prints the rescue-mode
+recovery steps. See [SETUP.md §13](SETUP.md#13-verification).
+
 ## Image versions are pinned on purpose
 
 Every image tag in this repository is pinned to a specific release. Floating

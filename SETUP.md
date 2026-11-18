@@ -456,6 +456,27 @@ docker ps --format '{{.Names}}\t{{.Status}}'
 The third one is the interesting check. Run it against every port any stack
 publishes and decide, for each, whether you meant it.
 
+### Before you reboot it
+
+```bash
+sudo ./scripts/preflight-reboot-check.sh
+```
+
+Read-only. It answers the question this server cannot answer from a keyboard:
+if the power cycles, does it come back? It checks that GRUB is in the MBR of
+every RAID member and that `grub-pc`'s install target is not a RAID device
+whose upgrades have been failing silently, that the newest initramfs actually
+contains the RAID modules needed to assemble the array holding `/`, that a
+previous kernel remains in the menu, that `GRUB_RECORDFAIL_TIMEOUT` is set —
+without it, one failed boot leaves GRUB waiting forever for a keypress on a
+machine with no console — and that the disks are healthy enough to survive
+being spun down. It prints the provider's rescue-mode recovery recipe at the
+end.
+
+Worth running before any reboot, and especially after a long uptime: the
+bootloader on disk can drift away from the packages in `/boot` across months
+of unattended upgrades, and nothing reveals that until the reboot.
+
 ## 14. Doing it with Ansible instead
 
 [`ansible/`](ansible/) automates steps 2 through 7 — admin user, SSH
