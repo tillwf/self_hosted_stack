@@ -159,6 +159,19 @@ Two more traps specific to nginx-proxy-manager's logs:
 - `datepattern` must cover the date **only**. Include the brackets and
   `[...]` is removed whole, breaking the `^\[\]` anchor.
 
+And one that makes the whole thing unverifiable: **fail2ban creates its
+iptables chains on the first ban, not at startup**. A jail that has never
+banned anyone has no chain, so `iptables -S` cannot distinguish a working
+jail from a broken one — absence is the normal, healthy state. Force the
+chains to exist instead, as an action *parameter* (a bare
+`actionstart_on_demand = false` jail option is ignored):
+
+```ini
+[DEFAULT]
+action_ = %(banaction)s[port="%(port)s", protocol="%(protocol)s", chain="%(chain)s", actionstart_on_demand=false]
+action  = %(action_)s
+```
+
 Both failures look identical to "no attacks yet". Prove a filter is alive
 before trusting a zero:
 

@@ -70,9 +70,16 @@
   changed_when: false
   failed_when: fail2ban_conftest.rc != 0
 
-# Docker flushes DOCKER-USER when it restarts, taking every f2b jump with it.
-# PartOf makes systemd restart fail2ban whenever docker restarts, which puts
-# the rules back.
+# Docker rebuilds DOCKER-USER when it restarts, dropping fail2ban's jumps.
+#
+# PartOf=docker.service looks like the fix and is what most guides suggest,
+# but it restarts fail2ban in lockstep with docker: measured on this host both
+# units entered active in the same second and DOCKER-USER ended up with no f2b
+# rules at all. Ordering alone is not enough either, because dockerd creates
+# the chain some time after systemd already considers the service active.
+#
+# A oneshot pulled in by docker.service can wait for the chain, let dockerd
+# settle, restart fail2ban, and then verify its own work.
 - name: Create the fail2ban unit drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/fail2ban.service.d
@@ -81,7 +88,36 @@
     group: root
     mode: "0755"
 
-- name: Restart fail2ban whenever docker restarts
+- name: Install the DOCKER-USER restore helper
+  ansible.builtin.copy:
+    src: fail2ban-restore-docker-chain
+    dest: /usr/local/sbin/fail2ban-restore-docker-chain
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the DOCKER-USER restore unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/fail2ban-restore-docker-chain.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/fail2ban).
+      [Unit]
+      Description=Restore fail2ban rules in DOCKER-USER after docker rebuilds its chains
+      After=docker.service fail2ban.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/fail2ban-restore-docker-chain
+
+      [Install]
+      WantedBy=docker.service
+  notify: Reload systemd
+
+- name: Order fail2ban after docker without coupling their restarts
   ansible.builtin.copy:
     dest: /etc/systemd/system/fail2ban.service.d/after-docker.conf
     owner: root
@@ -89,12 +125,18 @@
     mode: "0644"
     content: |
       # Managed by Ansible (roles/fail2ban).
+      # PartOf= is deliberately absent: see the comment in tasks/main.yml.
       [Unit]
       After=docker.service
-      PartOf=docker.service
   notify:
     - Reload systemd
     - Restart fail2ban
+
+- name: Enable the restore unit
+  ansible.builtin.systemd:
+    name: fail2ban-restore-docker-chain.service
+    enabled: true
+    daemon_reload: true
 
 - name: Enable and start fail2ban
   ansible.builtin.systemd:
@@ -164,6 +206,9 @@
     success_msg: npm-login is live and ignores healthy 403s
   when: fail2ban_npm_admin_host | length > 0
 
+# Only meaningful because actionstart_on_demand=false is set in jail.local.
+# With fail2ban's stock lazy behaviour these counts are 0 on a perfectly
+# healthy host that simply has not banned anyone yet.
 - name: Read back the chains fail2ban installed
   ansible.builtin.shell: |
     set -o pipefail

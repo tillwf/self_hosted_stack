@@ -91,3 +91,11 @@ those packets never go. `fail2ban-client status` still shows the ban, the
 rule is still in the table, and the attacker is still connected. The
 `fail2ban` role sets `chain` per jail and then asserts, after starting the
 service, that the jumps actually exist in both chains.
+
+Those assertions only work because the role also disables fail2ban's lazy
+`actionstart`. By default a jail creates its chain at the **first ban**, so a
+healthy jail that has never fired looks exactly like a broken one, and docker
+restarting — which rebuilds `DOCKER-USER` — is indistinguishable from
+misconfiguration. With `actionstart_on_demand=false` the chains exist from
+startup and absence becomes a real finding, which is what makes
+`scripts/server-healthcheck.sh` able to alert on it.

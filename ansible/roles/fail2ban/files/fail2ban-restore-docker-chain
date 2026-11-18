@@ -1,0 +1,30 @@
+#!/bin/sh
+# Managed by Ansible (roles/fail2ban).
+#
+# Docker rebuilds DOCKER-USER when it restarts, dropping fail2ban's jumps.
+# Ordering alone does not help: dockerd creates the chain some time AFTER
+# systemd considers docker.service active. So wait for the chain, let dockerd
+# settle, restart fail2ban, and then CHECK the jumps actually survived.
+set -u
+
+for _ in $(seq 1 60); do
+    iptables -S DOCKER-USER >/dev/null 2>&1 && break
+    sleep 1
+done
+
+sleep 5
+
+attempt=1
+while [ "$attempt" -le 3 ]; do
+    systemctl restart fail2ban
+    sleep 3
+    if iptables -S DOCKER-USER 2>/dev/null | grep -q 'f2b-'; then
+        logger -t fail2ban-restore "DOCKER-USER jumps restored (attempt $attempt)"
+        exit 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 5
+done
+
+logger -t fail2ban-restore "ERROR: no f2b jumps in DOCKER-USER after 3 attempts"
+exit 1

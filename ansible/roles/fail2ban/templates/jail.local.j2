@@ -1,5 +1,17 @@
 # Managed by Ansible (roles/fail2ban). Local edits are overwritten.
 [DEFAULT]
+# fail2ban runs actionstart ON DEMAND, at the first ban. A jail that has never
+# banned anyone therefore has no iptables chain at all, which means the chains
+# cannot be used to tell a working jail from a broken one -- absence is normal.
+# Disabling that makes every jail install its chain at startup, so a missing
+# chain becomes a real finding and the verification below means something.
+#
+# It has to be an action PARAMETER: jail.conf builds actions as
+# action_ = %(banaction)s[...], and a bare "actionstart_on_demand = false"
+# jail option is silently ignored.
+action_ = %(banaction)s[port="%(port)s", protocol="%(protocol)s", chain="%(chain)s", actionstart_on_demand=false]
+action  = %(action_)s
+
 backend   = systemd
 findtime  = {{ fail2ban_findtime }}
 bantime   = {{ fail2ban_bantime }}
