@@ -76,6 +76,50 @@ docker run --rm -v portainer_portainer_data:/d:ro -v "$HOME/backups":/b \
   alpine tar czf /b/portainer-data-$(date +%Y%m%dT%H%M%S).tar.gz -C /d .
 ```
 
+## Upgrading MariaDB
+
+Its own rules, because it is the one component where a wrong move is not
+recoverable by redeploying.
+
+**Forward only.** MariaDB cannot be downgraded across majors in place: the
+data files are migrated on first start and the older server will not read
+them afterwards. That also rules out "upgrading" to an older LTS — going from
+11.7 to 11.4 is a downgrade, however much longer 11.4 is supported.
+
+**Stay on LTS.** Short-term releases get roughly a year. 11.7's maintenance
+ended 2025-05-12 and it kept running here until it was noticed eighteen
+months later, which is the kind of thing nothing reports unless something
+checks (see `scripts/server-healthcheck.sh`).
+
+```bash
+# 1. Dump and snapshot first. A dump that merely exists is not a backup:
+#    check the gzip integrity and the "Dump completed" trailer.
+docker exec nextcloud-db-1 sh -c \
+  'mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --events --all-databases' \
+  | gzip -c > ~/backups/nc-db-$(date +%Y%m%dT%H%M%S).sql.gz
+gzip -t ~/backups/nc-db-*.sql.gz
+zcat ~/backups/nc-db-*.sql.gz | tail -5 | grep 'Dump completed'
+
+# 2. Cold snapshot of the data directory — the fast way back.
+docker stop nextcloud-nc-1 nextcloud-cron-1 nextcloud-db-1
+docker run --rm -v nextcloud_nextcloud_db:/v:ro -v "$HOME/backups":/b busybox \
+  tar czf /b/nc-dbvolume-$(date +%Y%m%dT%H%M%S).tar.gz -C /v .
+docker start nextcloud-db-1 nextcloud-nc-1 nextcloud-cron-1
+
+# 3. Bump the image in nextcloud/docker-compose.yml, commit, push,
+#    then Portainer > Stacks > nextcloud > Pull and redeploy.
+
+# 4. Verify.
+docker exec nextcloud-db-1 mariadb --version
+docker exec nextcloud-db-1 sh -c 'mariadb-upgrade -uroot -p"$MYSQL_ROOT_PASSWORD"'
+docker exec -u www-data nextcloud-nc-1 php occ status
+curl -sI https://nextcloud.till.wf/status.php | head -1
+```
+
+To roll back: restore the snapshot into the volume, set the image back to the
+previous tag **before** redeploying, and only then bring the stack up. Starting
+the new server again on restored old files re-runs a migration it already did.
+
 ## Hard rules
 
 - **Pin to a specific version.** Never reintroduce `latest`. Confirm the tag

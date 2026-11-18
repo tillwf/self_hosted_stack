@@ -56,10 +56,17 @@ services:
     expose:
       - 6379
   db:
-    # Pinned to the series currently deployed. `latest` floated, so a recreate
-    # could have landed on a MariaDB major Nextcloud does not support — and
-    # MariaDB cannot be downgraded across majors in place.
-    image: mariadb:11.7
+    # Pinned to an LTS series. `latest` floated, so a recreate could have
+    # landed on a MariaDB major Nextcloud does not support — and MariaDB
+    # cannot be downgraded across majors in place.
+    #
+    # 11.8 LTS is maintained until 2028-06-04. It replaced 11.7, a short-term
+    # release whose maintenance ended 2025-05-12 and which ran here unpatched
+    # for about eighteen months afterwards. 11.4 LTS is supported for longer
+    # (2029) but is *older* than 11.7, and moving to it would have meant a
+    # dump, wiping the data directory and restoring, rather than the forward
+    # in-place upgrade 11.8 allows. See UPGRADING.md.
+    image: mariadb:11.8
     # transaction-isolation/binlog-format are Nextcloud requirements. The rest
     # comes from the serverinfo database checks: a 96 MB redo log forces
     # frequent checkpoints, and the slow query log was off with a 10s threshold,

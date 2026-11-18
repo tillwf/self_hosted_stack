@@ -215,6 +215,32 @@ next sync would discard the commits. Push to GitHub and let the mirror follow.
 A repository that should be writable in Forgejo must not be a mirror; keep it
 out of the GitHub account, or accept that the two will diverge.
 
+## Daily health check
+
+`scripts/server-healthcheck.sh` reports only problems and exits non-zero when
+it finds any, so it can be driven by a systemd timer that mails on failure and
+stays quiet otherwise.
+
+```bash
+sudo ./scripts/server-healthcheck.sh
+```
+
+It checks disk usage, degraded arrays, SMART health and bad sectors, backup
+freshness, pending reboots, failed units, container state and health, TLS
+expiry for every enabled proxy host (over a real SNI handshake, so it tests
+what visitors are served), and the size of `nextcloud.log`.
+
+It also verifies that fail2ban's rules are **present in the kernel**, in both
+`INPUT` and `DOCKER-USER` — not merely that the service is running. Docker
+flushes `DOCKER-USER` on every restart, and a jail whose rules have been
+flushed still reports healthy in `fail2ban-client status`. The first run of
+this script found exactly that, plus a container in a restart loop that
+nothing had reported.
+
+Thresholds are overridable by environment variable: `DISK_PCT_MAX`,
+`BACKUP_DIR`, `BACKUP_MAX_AGE_DAYS`, `CERT_MIN_DAYS`, `NC_LOG_MAX_MB`,
+`NPM_DB`.
+
 ## Checking the server will survive a reboot
 
 `scripts/preflight-reboot-check.sh` is a read-only audit of everything that
