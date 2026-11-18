@@ -1,0 +1,46 @@
+---
+# Brute-force protection. Deliberately split in two, because the host and the
+# containers are filtered by different iptables chains — see tasks/main.yml.
+
+fail2ban_findtime: 10m
+fail2ban_bantime: 1h
+fail2ban_maxretry: 5
+
+# Never ban these. The docker bridge ranges matter: nginx-proxy-manager's own
+# health checks and any container-to-container request arrive from 172.16/12,
+# and banning that range takes the proxy off the air.
+fail2ban_ignoreip:
+  - 127.0.0.1/8
+  - ::1
+  - 172.16.0.0/12
+  - 10.0.0.0/8
+
+# sshd. The port list has to match the real one: the packaged jail watches 22,
+# which protects nothing once ssh_hardening has moved sshd elsewhere. Add the
+# git-over-SSH port too if a stack publishes one — it is a host-facing port as
+# far as iptables is concerned, even though a container answers on it.
+fail2ban_ssh_ports: "{{ ([ssh_port] + firewall_extra_tcp_ports) | map('string') | join(',') }}"
+
+# --- nginx-proxy-manager jails ----------------------------------------------
+# Host directory bind-mounted at /data in the npm container; its logs/ holds
+# one access log per proxy host plus fallback_access.log.
+npm_data_dir: "/home/{{ admin_user }}/npm_data"
+
+# The domain whose vhosts are yours. Any request for a *different* vhost
+# reached the fallback site, which means someone addressed the raw IP, the
+# reverse-DNS name, or tried to use the proxy as an open relay. Leave empty to
+# disable the fallback jail.
+fail2ban_site_domain: ""
+
+# Vhost of the nginx-proxy-manager admin UI. Jailed on 401 only. Leave empty
+# to disable that jail. Do NOT widen it to 403: healthy clients emit 403s
+# during normal operation and would be banned.
+fail2ban_npm_admin_host: ""
+
+fail2ban_fallback_findtime: 1h
+fail2ban_fallback_maxretry: 10
+fail2ban_fallback_bantime: 24h
+
+# Absolute path to nextcloud.log on the host, if the data directory is bind
+# mounted. Empty disables the jail.
+fail2ban_nextcloud_log: ""

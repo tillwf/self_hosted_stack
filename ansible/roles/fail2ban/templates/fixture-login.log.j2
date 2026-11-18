@@ -1,0 +1,2 @@
+[18/Nov/2026:09:00:00 +0000] - 401 401 - POST https {{ fail2ban_npm_admin_host }} "/api/tokens" [Client 198.51.100.25] [Length 50] [Gzip -] [Sent-to 127.0.0.1] "curl/8.5.0" "-"
+[18/Nov/2026:09:00:01 +0000] - 403 403 - GET https joplin.{{ fail2ban_site_domain | default('example.com', true) }} "/api/share_users" [Client 198.51.100.26] [Length 57] [Gzip -] [Sent-to joplin] "node-fetch/1.0" "-"

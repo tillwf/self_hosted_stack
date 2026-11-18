@@ -131,6 +131,59 @@ needs **no** rule of its own: it is reached over 443.
 > `ports:` entry as a public opening and prefer putting a service on the proxy
 > network instead — see [§9](#9-nginx-proxy-manager).
 
+### Brute-force protection
+
+```bash
+sudo apt install -y fail2ban
+```
+
+The packaged configuration protects nothing on this server, for two reasons
+worth understanding before copying any tutorial:
+
+1. **The default `sshd` jail watches port 22.** Once [§3](#3-harden-ssh) has
+   moved sshd, the jail reads the journal of a port nothing connects to.
+2. **A default jail cannot ban web traffic here.** 80 and 443 are published by
+   the proxy *container*. Docker DNATs those packets, so they traverse
+   `FORWARD` and never reach `INPUT` — where fail2ban puts its rules by
+   default. The ban appears in `fail2ban-client status`, the rule exists in
+   the table, and the attacker keeps browsing. Container jails must set
+   `chain = DOCKER-USER`, and it has to be a jail variable: fail2ban's
+   `action_` passes `chain="%(chain)s"` and silently overrides
+   `banaction = iptables-allports[chain=DOCKER-USER]`.
+
+Two more traps specific to nginx-proxy-manager's logs:
+
+- fail2ban **strips the timestamp** before matching, so a filter sees
+  `[] 200 - GET http <host> "/uri" [Client <ip>]`. Anchoring on
+  `^\[[^]]+\]` matches nothing, ever.
+- `datepattern` must cover the date **only**. Include the brackets and
+  `[...]` is removed whole, breaking the `^\[\]` anchor.
+
+Both failures look identical to "no attacks yet". Prove a filter is alive
+before trusting a zero:
+
+```bash
+# must report 1, not 0 — a dead regex and a quiet server look the same
+printf '%s\n' '[18/Nov/2026:09:00:00 +0000] - 401 401 - POST https proxy.example.com "/api/tokens" [Client 198.51.100.25] [Length 50] [Gzip -] [Sent-to 127.0.0.1] "curl" "-"' \
+  | sudo tee /var/tmp/f2b-fixture.log >/dev/null
+sudo fail2ban-regex /var/tmp/f2b-fixture.log /etc/fail2ban/filter.d/npm-login.conf | grep Failregex
+
+# and prove the ban reaches the chain that governs container traffic
+sudo fail2ban-client set npm-fallback banip 198.51.100.77
+sudo iptables -S DOCKER-USER | grep f2b      # expect a jump per web jail
+sudo iptables -S INPUT       | grep f2b-sshd # expect the sshd jail here
+sudo fail2ban-client set npm-fallback unbanip 198.51.100.77
+```
+
+Scope the jails narrowly. A blanket 401/403 rule across every proxy host bans
+real users: Joplin's sync client and Nextcloud both emit 403s in normal
+operation. The useful signals are 401s against the admin UI, and anything that
+fell through to the fallback site — a request for the bare IP, the reverse-DNS
+name, or someone else's domain through your proxy.
+
+The [`fail2ban`](ansible/roles/fail2ban/) Ansible role does all of the above,
+including the verification.
+
 ## 5. System basics
 
 ```bash
@@ -406,7 +459,7 @@ publishes and decide, for each, whether you meant it.
 ## 14. Doing it with Ansible instead
 
 [`ansible/`](ansible/) automates steps 2 through 7 — admin user, SSH
-hardening, firewall, base packages, Docker, Portainer. DNS, the proxy hosts
+hardening, firewall, fail2ban, base packages, Docker, Portainer. DNS, the proxy hosts
 and the stacks stay manual: they are click-once-per-lifetime, and the stacks
 are already declarative in this repository.
 

@@ -1,0 +1,69 @@
+# Managed by Ansible (roles/fail2ban). Local edits are overwritten.
+[DEFAULT]
+backend   = systemd
+findtime  = {{ fail2ban_findtime }}
+bantime   = {{ fail2ban_bantime }}
+maxretry  = {{ fail2ban_maxretry }}
+ignoreip  = {{ fail2ban_ignoreip | join(' ') }}
+
+# --- host services -----------------------------------------------------------
+# sshd listens on the host itself, so INPUT is the right chain. banaction is
+# pinned rather than left to the default: on at least one Ubuntu 24.04 host the
+# jail selected the nftables backend and installed no iptables chain at all,
+# which is indistinguishable from "working" unless you look.
+[sshd]
+enabled   = true
+port      = {{ fail2ban_ssh_ports }}
+backend   = systemd
+banaction = iptables-multiport
+chain     = INPUT
+maxretry  = 4
+bantime   = 4h
+
+{% if fail2ban_npm_admin_host | length > 0 %}
+# --- container services ------------------------------------------------------
+# 80 and 443 are published by the proxy container. Docker DNATs the packets,
+# so they pass through FORWARD and never reach INPUT: these jails MUST filter
+# in DOCKER-USER. 'chain' is a jail variable because action_ passes
+# chain="%(chain)s" and would override banaction = iptables-allports[chain=...].
+[npm-login]
+enabled   = true
+filter    = npm-login
+backend   = auto
+logpath   = {{ npm_data_dir }}/logs/proxy-host-*_access.log
+port      = http,https
+banaction = iptables-allports
+chain     = DOCKER-USER
+maxretry  = 5
+bantime   = 2h
+{% endif %}
+
+{% if fail2ban_site_domain | length > 0 %}
+[npm-fallback]
+enabled   = true
+filter    = npm-fallback
+backend   = auto
+logpath   = {{ npm_data_dir }}/logs/fallback_access.log
+port      = http,https
+banaction = iptables-allports
+chain     = DOCKER-USER
+findtime  = {{ fail2ban_fallback_findtime }}
+maxretry  = {{ fail2ban_fallback_maxretry }}
+bantime   = {{ fail2ban_fallback_bantime }}
+{% endif %}
+
+{% if fail2ban_nextcloud_log | length > 0 %}
+# Nextcloud writes failed logins to its own log. Note that Nextcloud also has
+# a built-in brute-force throttle, which stays on: this jail is the second
+# layer, not the first.
+[nextcloud-auth]
+enabled   = true
+filter    = nextcloud-auth
+backend   = auto
+logpath   = {{ fail2ban_nextcloud_log }}
+port      = http,https
+banaction = iptables-allports
+chain     = DOCKER-USER
+maxretry  = 5
+bantime   = 4h
+{% endif %}

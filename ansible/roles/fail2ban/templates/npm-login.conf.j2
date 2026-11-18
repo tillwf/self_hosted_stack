@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/fail2ban).
+#
+# Failed logins against the nginx-proxy-manager admin UI only.
+#
+# Scoped to 401 on one vhost on purpose. A blanket 401/403 jail across every
+# proxy host bans legitimate clients: Joplin's sync client and Nextcloud both
+# emit 403s in normal operation, and on the host this was written for every
+# single 403 in the logs belonged to a real user.
+#
+# See npm-fallback.conf for why the regex starts with '^\[\]' and why
+# datepattern must not include the brackets.
+#
+# Layout: [] <cache> <upstream> <status> <-> <method> <scheme> <host> "<uri>" [Client <ip>]
+[Definition]
+failregex = ^\[\] \S+ \S+ 401 \S+ \S+ \S+ {{ fail2ban_npm_admin_host | regex_escape }} "[^"]*" \[Client <HOST>\]
+ignoreregex =
+datepattern = %%d/%%b/%%Y:%%H:%%M:%%S %%z

@@ -24,6 +24,24 @@ firewall_extra_tcp_ports: []
 # the application instead.
 timezone: Etc/UTC
 
+# --- fail2ban ---------------------------------------------------------------
+# The domain whose vhosts are yours. Any request for a different vhost reached
+# the proxy's fallback site, which means the raw IP, the reverse-DNS name, or
+# an open-relay probe — all worth banning. Empty disables that jail.
+fail2ban_site_domain: example.com
+
+# Vhost of the nginx-proxy-manager admin UI. Jailed on 401 only; widening it
+# to 403 bans healthy Joplin and Nextcloud clients. Empty disables the jail.
+fail2ban_npm_admin_host: proxy.example.com
+
+# Host path of nginx-proxy-manager's /data bind mount, whose logs/ directory
+# the two jails above read. Defaults to /home/<admin_user>/npm_data.
+# npm_data_dir: "/home/{{ admin_user }}/npm_data"
+
+# Absolute path to nextcloud.log, if the Nextcloud data directory is bind
+# mounted on the host. Empty disables that jail.
+fail2ban_nextcloud_log: ""
+
 # This repository, cloned onto the server so Portainer can be brought up by
 # hand before it can manage anything.
 stack_repo_url: https://github.com/<YOUR_GITHUB_USER>/<THIS_REPO>.git

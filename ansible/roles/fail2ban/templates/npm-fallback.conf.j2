@@ -1,0 +1,24 @@
+# Managed by Ansible (roles/fail2ban).
+#
+# Requests that matched no configured vhost and fell through to the default
+# site: bare-IP scanning, probes for the reverse-DNS hostname, and attempts to
+# use the proxy as an open relay (requests for httpbin.org and friends).
+#
+# Two things about this format are easy to get wrong:
+#
+#  1. fail2ban strips the timestamp before matching, so the line the regex sees
+#     starts with an EMPTY bracket pair: '[] 200 - GET http <host> "/uri" ...'.
+#     A filter anchored on '^\[[^]]+\]' matches nothing, ever.
+#  2. datepattern must cover the date ONLY. Include the surrounding brackets
+#     and fail2ban removes '[...]' whole, leaving nothing for '^\[\]' to
+#     anchor on — measured on real logs: 0 matches bracketed, 2459 unbracketed.
+#
+# fallback_access.log carries four fields before the vhost; the per-proxy-host
+# logs carry six (extra cache/upstream status). One regex cannot serve both,
+# which is why npm-login is a separate filter reading separate files.
+#
+# Layout: [] <status> <upstream> <method> <scheme> <host> "<uri>" [Client <ip>]
+[Definition]
+failregex = ^\[\] \S+ \S+ \S+ \S+ (?!(?:[A-Za-z0-9-]+\.)*{{ fail2ban_site_domain | regex_escape }} )\S+ "[^"]*" \[Client <HOST>\]
+ignoreregex =
+datepattern = %%d/%%b/%%Y:%%H:%%M:%%S %%z

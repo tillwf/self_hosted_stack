@@ -6,6 +6,10 @@
 # The firewall role runs before ssh_hardening on purpose: the new port has to
 # be allowed through ufw before sshd starts listening on it, or the next
 # connection is refused.
+#
+# fail2ban runs after docker, not next to firewall: its web jails install
+# their rules in the DOCKER-USER chain, which does not exist until Docker has
+# created it.
 - name: Configure the self-hosted server
   hosts: selfhosted
   gather_facts: true
@@ -34,4 +38,5 @@
     - role: firewall
     - role: ssh_hardening
     - role: docker
+    - role: fail2ban
     - role: portainer

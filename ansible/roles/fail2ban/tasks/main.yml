@@ -1,0 +1,193 @@
+---
+# Two chains, two kinds of service.
+#
+#   * sshd listens on the host, so its bans belong in INPUT.
+#   * 80 and 443 are published by a container. Docker DNATs those packets and
+#     they traverse FORWARD, never INPUT, so a ban in INPUT is a silent no-op.
+#     They have to be filtered in DOCKER-USER.
+#
+# 'chain' must be set as a jail variable rather than inline on banaction:
+# fail2ban's action_ template already passes chain="%(chain)s", which
+# overrides any banaction = iptables-allports[chain=DOCKER-USER].
+
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+
+# DOCKER-USER only exists once Docker has created it. Running this role before
+# the docker role leaves the web jails unable to start their action.
+- name: Check that the DOCKER-USER chain exists
+  ansible.builtin.command: iptables -S DOCKER-USER
+  register: fail2ban_docker_user
+  changed_when: false
+  failed_when: false
+
+- name: Refuse to configure web jails without DOCKER-USER
+  ansible.builtin.fail:
+    msg: >-
+      The DOCKER-USER chain does not exist, so bans for container-published
+      ports cannot be installed. Run the docker role first.
+  when:
+    - fail2ban_docker_user.rc != 0
+    - fail2ban_site_domain | length > 0 or fail2ban_npm_admin_host | length > 0
+
+- name: Install the nginx-proxy-manager fallback filter
+  ansible.builtin.template:
+    src: npm-fallback.conf.j2
+    dest: /etc/fail2ban/filter.d/npm-fallback.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: fail2ban_site_domain | length > 0
+  notify: Restart fail2ban
+
+- name: Install the nginx-proxy-manager admin login filter
+  ansible.builtin.template:
+    src: npm-login.conf.j2
+    dest: /etc/fail2ban/filter.d/npm-login.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: fail2ban_npm_admin_host | length > 0
+  notify: Restart fail2ban
+
+- name: Install the jail configuration
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+# fail2ban-client -t validates the whole config tree, not a single file, so it
+# cannot be used as a template validate= hook. Running it here means a broken
+# jail is caught before the handler restarts the service on top of it.
+- name: Validate the fail2ban configuration
+  ansible.builtin.command: fail2ban-client -t
+  register: fail2ban_conftest
+  changed_when: false
+  failed_when: fail2ban_conftest.rc != 0
+
+# Docker flushes DOCKER-USER when it restarts, taking every f2b jump with it.
+# PartOf makes systemd restart fail2ban whenever docker restarts, which puts
+# the rules back.
+- name: Create the fail2ban unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/fail2ban.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Restart fail2ban whenever docker restarts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/fail2ban.service.d/after-docker.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/fail2ban).
+      [Unit]
+      After=docker.service
+      PartOf=docker.service
+  notify:
+    - Reload systemd
+    - Restart fail2ban
+
+- name: Enable and start fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so the jails are live before they are verified
+  ansible.builtin.meta: flush_handlers
+
+# --- verification ------------------------------------------------------------
+# Every one of these checks exists because the corresponding mistake was made
+# and shipped. A filter that matches nothing looks exactly like a filter with
+# nothing to match, so the fixtures below assert a known-bad line IS caught and
+# a known-good line is NOT.
+
+- name: Install filter test fixtures
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - src: fixture-fallback.log.j2
+      dest: /var/tmp/fail2ban-fixture-fallback.log
+    - src: fixture-login.log.j2
+      dest: /var/tmp/fail2ban-fixture-login.log
+  changed_when: false
+
+- name: Verify the fallback filter catches a scan and spares your own vhost
+  ansible.builtin.command: >-
+    fail2ban-regex /var/tmp/fail2ban-fixture-fallback.log
+    /etc/fail2ban/filter.d/npm-fallback.conf
+  register: fail2ban_fallback_check
+  changed_when: false
+  when: fail2ban_site_domain | length > 0
+
+- name: Assert the fallback filter matched exactly the scan line
+  ansible.builtin.assert:
+    that: "'Failregex: 1 total' in fail2ban_fallback_check.stdout"
+    fail_msg: >-
+      npm-fallback matched {{ fail2ban_fallback_check.stdout_lines
+      | select('search', '^Failregex:') | first | default('nothing') }}
+      instead of exactly 1 line. Either the regex is dead (a datepattern that
+      includes the surrounding brackets strips them and breaks the '^\[\]'
+      anchor) or it would ban your own vhosts.
+    success_msg: npm-fallback bans scans and ignores your vhosts
+  when: fail2ban_site_domain | length > 0
+
+- name: Verify the admin login filter catches a 401 and spares a healthy 403
+  ansible.builtin.command: >-
+    fail2ban-regex /var/tmp/fail2ban-fixture-login.log
+    /etc/fail2ban/filter.d/npm-login.conf
+  register: fail2ban_login_check
+  changed_when: false
+  when: fail2ban_npm_admin_host | length > 0
+
+- name: Assert the admin login filter matched exactly the 401
+  ansible.builtin.assert:
+    that: "'Failregex: 1 total' in fail2ban_login_check.stdout"
+    fail_msg: >-
+      npm-login did not match exactly the synthetic 401. A zero here on real
+      logs would be indistinguishable from "no attacks yet", which is why the
+      fixture exists.
+    success_msg: npm-login is live and ignores healthy 403s
+  when: fail2ban_npm_admin_host | length > 0
+
+- name: Read back the chains fail2ban installed
+  ansible.builtin.shell: |
+    set -o pipefail
+    iptables -S INPUT | grep -c 'f2b-sshd' || true
+    iptables -S DOCKER-USER 2>/dev/null | grep -c 'f2b-' || true
+  args:
+    executable: /bin/bash
+  register: fail2ban_chains
+  changed_when: false
+
+- name: Assert sshd is filtered in INPUT
+  ansible.builtin.assert:
+    that: fail2ban_chains.stdout_lines[0] | int > 0
+    fail_msg: >-
+      No f2b-sshd jump in INPUT. The jail may have silently selected the
+      nftables backend; banaction is pinned to iptables-multiport to prevent
+      that, so check 'fail2ban-client get sshd actions'.
+    success_msg: sshd bans land in INPUT
+
+- name: Assert the container jails are filtered in DOCKER-USER
+  ansible.builtin.assert:
+    that: fail2ban_chains.stdout_lines[1] | int > 0
+    fail_msg: >-
+      No f2b jumps in DOCKER-USER, so bans for 80/443 would be no-ops against
+      DNAT'd container traffic.
+    success_msg: container bans land in DOCKER-USER
+  when: fail2ban_site_domain | length > 0 or fail2ban_npm_admin_host | length > 0

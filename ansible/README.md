@@ -1,7 +1,7 @@
 # Ansible: host-level setup
 
 Automates steps 2–7 of [`../SETUP.md`](../SETUP.md) — admin account, SSH
-hardening, firewall, base packages, Docker, Portainer. Everything above that
+hardening, firewall, brute-force protection, base packages, Docker, Portainer. Everything above that
 layer stays manual and declarative: DNS records and proxy hosts are
 click-once-per-lifetime, and the stacks themselves already live in this
 repository and are deployed by Portainer from git.
@@ -57,6 +57,7 @@ Drop the flag only if you grant that account `NOPASSWD` sudo.
 | `firewall` | ufw, default deny inbound, allows `ssh_port` + 80 + 443 + `firewall_extra_tcp_ports` | Runs **before** `ssh_hardening` so the new port is open before sshd moves to it |
 | `ssh_hardening` | drop-in in `sshd_config.d/`: key-only, no root, `AllowUsers` | Validates with `sshd -t` before writing; refuses to run against a socket-activated sshd, where `Port` would be ignored |
 | `docker` | Docker's apt repository, Engine + Compose plugin, admin in `docker` group | Distribution packages lag and lack Compose v2 |
+| `fail2ban` | sshd jail on the real port, plus proxy jails for scans and admin-UI logins | Runs **after** `docker`: the web jails filter in `DOCKER-USER`, which Docker creates. Verifies its own filters against fixtures and asserts the chains exist |
 | `portainer` | clones this repository to the server, `docker compose up -d` for `portainer/` | The one stack Portainer cannot manage itself |
 
 ## What it deliberately does not do
@@ -76,3 +77,17 @@ container with `ports: - "X:Y"` is reachable from the internet whether or not
 `firewall_extra_tcp_ports` mentions it. The firewall role protects the host's
 own services; it does not constrain Docker. Prefer putting a service on the
 proxy's network and publishing nothing.
+
+The same asymmetry decides where a ban has to go, and it is easy to get
+wrong in a way that looks fine:
+
+| Service | Packets traverse | Ban belongs in |
+| --- | --- | --- |
+| sshd, anything the host itself listens on | `INPUT` | `INPUT` |
+| 80, 443, any `ports:` published by a container | `FORWARD` (DNAT) | `DOCKER-USER` |
+
+A jail left on the default chain bans container traffic in `INPUT`, where
+those packets never go. `fail2ban-client status` still shows the ban, the
+rule is still in the table, and the attacker is still connected. The
+`fail2ban` role sets `chain` per jail and then asserts, after starting the
+service, that the jumps actually exist in both chains.
