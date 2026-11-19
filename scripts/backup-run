@@ -1,0 +1,164 @@
+#!/bin/bash
+# backup-run — nightly backup of the state that rebuilds this server.
+#
+# Scope is deliberately NOT the bulk data: no nextcloud_data, no Pictures, no
+# Musics. This covers the ~3 GB of databases and configuration without which
+# the stacks cannot be rebuilt, and which fits anywhere.
+#
+# Databases are dumped logically, never snapshotted live: a file-level copy of
+# a running InnoDB or Postgres data directory is not a backup, it is a copy of
+# a file that was changing while it was read.
+#
+# Exit non-zero on any failure. The systemd service mails on failure.
+set -uo pipefail
+
+. /etc/restic/env
+
+STAGING=${STAGING:-/var/backups/dumps}
+RETENTION_ARGS=${RETENTION_ARGS:---keep-daily 7 --keep-weekly 4 --keep-monthly 6 --keep-yearly 1}
+FAILED=0
+
+log()  { printf '%s %s\n' "$(date -Is)" "$*"; }
+fail() { printf '%s ERROR: %s\n' "$(date -Is)" "$*" >&2; FAILED=1; }
+
+mkdir -p "$STAGING"
+chmod 0700 "$STAGING"
+
+# --- databases -------------------------------------------------------------
+# Credentials are read from each container's own environment: never passed on
+# a command line (visible in ps) and never written to this script.
+
+dump_mysql() {
+    local container=$1 out="$STAGING/$1-$(date +%Y%m%dT%H%M%S).sql.gz"
+    log "dumping $container"
+    if ! docker exec "$container" sh -c \
+        'mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --events --all-databases' \
+        2>/dev/null | gzip -c >"$out"; then
+        fail "$container: dump command failed"; return 1
+    fi
+    # A dump that exists is not a dump that is valid.
+    gzip -t "$out" 2>/dev/null || { fail "$container: corrupt gzip"; return 1; }
+    zcat "$out" | tail -5 | grep -q 'Dump completed' || { fail "$container: truncated (no trailer)"; return 1; }
+    log "  ok $(du -h "$out" | cut -f1) $out"
+    # Row counts, so the monthly restore drill has something to compare against.
+    docker exec "$container" sh -c \
+        'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e "select table_schema, table_name, table_rows from information_schema.tables where table_schema not in (\"information_schema\",\"performance_schema\",\"mysql\",\"sys\")"' \
+        2>/dev/null >"${out%.sql.gz}.rowcounts.txt"
+}
+
+dump_pg() {
+    local container=$1 out="$STAGING/$1-$(date +%Y%m%dT%H%M%S).sql.gz"
+    log "dumping $container"
+    if ! docker exec "$container" sh -c \
+        'pg_dumpall -U "$POSTGRES_USER"' 2>/dev/null | gzip -c >"$out"; then
+        fail "$container: dump command failed"; return 1
+    fi
+    gzip -t "$out" 2>/dev/null || { fail "$container: corrupt gzip"; return 1; }
+    # pg_dumpall's trailer. Without this check a dump truncated by a disk-full
+    # or a container restart looks like a perfectly good file.
+    zcat "$out" | tail -5 | grep -q 'PostgreSQL database cluster dump complete' ||
+        { fail "$container: truncated (no trailer)"; return 1; }
+    log "  ok $(du -h "$out" | cut -f1) $out"
+    docker exec "$container" sh -c \
+        'psql -U "$POSTGRES_USER" -d postgres -tAF" " -c "select schemaname, relname, n_live_tup from pg_stat_user_tables order by relname"' \
+        2>/dev/null >"${out%.sql.gz}.rowcounts.txt"
+}
+
+# nginx_proxy_db is deliberately absent. The npm service is given no
+# DB_MYSQL_* environment, so nginx-proxy-manager falls back to SQLite at
+# /data/database.sqlite; that MariaDB holds nothing but its own system schema
+# and has no root password at all (its whole environment is HOME/HOSTNAME/
+# PATH). Dumping it fails, and would capture nothing if it succeeded. The
+# real proxy configuration is the SQLite file handled below.
+for c in nextcloud-db-1; do
+    docker ps --format '{{.Names}}' | grep -qx "$c" && dump_mysql "$c"
+done
+for c in joplin-db-1 meelo-db-1; do
+    docker ps --format '{{.Names}}' | grep -qx "$c" && dump_pg "$c"
+done
+
+# nginx-proxy-manager's actual database: proxy hosts, certificate metadata,
+# access lists. Copying the file while npm may be writing can capture a torn
+# page, so use SQLite's own backup API and then verify the copy opens and
+# passes an integrity check.
+dump_sqlite() {
+    local src=$1 name=$2 out
+    out="$STAGING/$name-$(date +%Y%m%dT%H%M%S).sqlite"
+    [ -f "$src" ] || return 0
+    log "dumping $name (sqlite backup API)"
+    if ! python3 - "$src" "$out" <<'PY'
+import sqlite3, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+d = sqlite3.connect(dst)
+with d:
+    s.backup(d)
+d.close(); s.close()
+PY
+    then
+        fail "$name: sqlite backup failed"; return 1
+    fi
+    local check
+    check=$(python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("pragma integrity_check").fetchone()[0])' "$out" 2>/dev/null)
+    [ "$check" = "ok" ] || { fail "$name: integrity_check said '${check:-error}'"; return 1; }
+    log "  ok $(du -h "$out" | cut -f1) (integrity_check ok)"
+}
+
+dump_sqlite /home/till/npm_data/database.sqlite npm-database
+
+# Forgejo runs SQLite in WAL mode (forgejo.db-wal / forgejo.db-shm are present
+# next to it). Copying forgejo.db on its own can therefore capture a database
+# that is missing its most recently committed transactions, and the raw file
+# in the snapshot must not be trusted as the restore source. The backup API
+# checkpoints the WAL into a consistent standalone file.
+dump_sqlite /home/till/gitea/gitea/forgejo.db forgejo-database
+
+# Keep only the newest two generations in staging; restic holds the history.
+find "$STAGING" -name '*.sql.gz' -printf '%T@ %p\n' | sort -rn | tail -n +5 | cut -d' ' -f2- |
+    while read -r old; do rm -f "$old" "${old%.sql.gz}.rowcounts.txt"; done
+find "$STAGING" -name '*.sqlite' -printf '%T@ %p\n' | sort -rn | tail -n +3 | cut -d' ' -f2- |
+    while read -r old; do rm -f "$old"; done
+
+# --- snapshot --------------------------------------------------------------
+SOURCES=()
+for s in "$STAGING" \
+         /home/till/gitea \
+         /home/till/npm_data \
+         /home/till/meelo_settings \
+         /home/till/navidrome_data \
+         /home/till/Documents \
+         /var/lib/docker/volumes/npm_letsencrypt/_data \
+         /var/lib/docker/volumes/portainer_portainer_data/_data; do
+    [ -e "$s" ] && SOURCES+=("$s")
+done
+
+log "backing up ${#SOURCES[@]} sources to $RESTIC_REPOSITORY"
+if restic backup --verbose=1 --tag nightly \
+      --exclude-file=/etc/restic/excludes "${SOURCES[@]}"; then
+    log "snapshot created"
+else
+    fail "restic backup failed"
+fi
+
+# --- retention and integrity ----------------------------------------------
+log "pruning"
+restic forget $RETENTION_ARGS --prune || fail "restic forget/prune failed"
+
+log "checking repository"
+# Structural check every night. Weekly, also re-read a sample of the actual
+# data: structure can be intact while a pack file is silently corrupt.
+if [ "$(date +%u)" = "7" ]; then
+    restic check --read-data-subset=5% || fail "restic check (with data sample) failed"
+else
+    restic check || fail "restic check failed"
+fi
+
+log "latest snapshots:"
+restic snapshots --latest 3 --compact 2>/dev/null
+
+if [ "$FAILED" -ne 0 ]; then
+    log "FINISHED WITH ERRORS"
+    exit 1
+fi
+log "finished cleanly"
+exit 0

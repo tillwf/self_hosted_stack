@@ -449,6 +449,52 @@ Ship them somewhere that is not this machine. A dump written to the same RAID
 array as the database protects against exactly one failure mode: your own
 mistake five minutes ago.
 
+### Doing it
+
+```bash
+sudo ./scripts/setup-restic-backup.sh        # restic, repo, units, first run
+sudo /usr/local/sbin/backup-restore-drill    # prove it restores
+```
+
+Installs a nightly `backup-run` and a monthly restore drill, both mailing on
+failure. Scope is state, not bulk: database dumps plus `gitea/`, `npm_data/`,
+the `npm_letsencrypt` and Portainer volumes, `meelo_settings/`,
+`navidrome_data/` and `Documents/` — about 3 GB. Media is deliberately out;
+add it only with an off-box destination sized for it.
+
+Three things this code does that a naive backup script does not, each because
+the naive version failed here first:
+
+**A dump that exists is not a dump that is valid.** Every dump is checked for
+gzip integrity *and* for its format's trailer (`Dump completed`,
+`PostgreSQL database cluster dump complete`). A dump truncated by a full disk
+is perfectly valid gzip.
+
+**SQLite in WAL mode cannot be backed up by copying the file.** Both
+nginx-proxy-manager and Forgejo use SQLite. On this server `forgejo.db` was
+last checkpointed four days before its `forgejo.db-wal`, so a file-level copy
+would have restored as a valid, openable database missing four days of
+commits. Both are dumped through SQLite's backup API and then verified with
+`PRAGMA integrity_check`. If you see a `.db-wal` next to a database, the
+`.db` alone is not a backup.
+
+**`restic check` does not prove a backup is restorable.** It verifies the
+repository's own structure. The monthly drill restores for real: it opens the
+Forgejo database and counts repositories and users, then loads the Nextcloud
+dump into a scratch MariaDB container of the same image and compares
+`oc_filecache` row counts against live. The first drill found the WAL problem
+above, on a repository that passed every `restic check`.
+
+```
+oc_filecache rows: restored=555962 live=555962
+forgejo: 20 repositories, 1 users
+```
+
+The passphrase in `/etc/restic/password` must leave the machine, or the
+backup dies with the disk it was protecting against. `RESTIC_REPOSITORY` in
+`/etc/restic/env` is one line; until it points off-box,
+`scripts/server-healthcheck.sh` reports that daily and on purpose.
+
 ## 13. Verification
 
 ```bash

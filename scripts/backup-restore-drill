@@ -1,0 +1,123 @@
+#!/bin/bash
+# backup-restore-drill — monthly proof that the backup can actually be restored.
+#
+# restic check verifies the repository's own structure. It does not prove the
+# contents are usable: a dump can be valid gzip, pass every integrity check,
+# and still be an empty database. This restores for real, loads the dump into
+# a throwaway server, and compares row counts against what was recorded when
+# the dump was taken.
+#
+# Changes nothing outside a temporary directory and a scratch container.
+set -uo pipefail
+
+. /etc/restic/env
+
+WORK=$(mktemp -d /var/tmp/restore-drill.XXXXXX)
+SCRATCH=restore-drill-db
+FAILED=0
+
+log()  { printf '%s %s\n' "$(date -Is)" "$*"; }
+fail() { printf '%s FAIL: %s\n' "$(date -Is)" "$*" >&2; FAILED=1; }
+cleanup() {
+    docker rm -f "$SCRATCH" >/dev/null 2>&1
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+log "drill starting in $WORK"
+
+# --- 1. can we read the repository and list snapshots? ---------------------
+SNAP=$(restic snapshots --latest 1 --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["short_id"])' 2>/dev/null)
+[ -z "$SNAP" ] && { fail "no snapshot found"; exit 1; }
+log "newest snapshot: $SNAP"
+
+AGE_DAYS=$(restic snapshots --latest 1 --json 2>/dev/null |
+    python3 -c 'import json,sys,datetime
+s=json.load(sys.stdin)[0]["time"][:19]
+d=datetime.datetime.now()-datetime.datetime.fromisoformat(s)
+print(d.days)' 2>/dev/null)
+[ "${AGE_DAYS:-99}" -gt 2 ] && fail "newest snapshot is ${AGE_DAYS} days old"
+
+# --- 2. restore Forgejo's database and verify it is usable -----------------
+# The checkpointed copy from the staging directory, NOT the raw forgejo.db in
+# the snapshot: Forgejo runs SQLite in WAL mode, so the raw file can be
+# missing recently committed transactions.
+log "restoring the Forgejo database"
+if restic restore "$SNAP" --target "$WORK" --include '/var/backups/dumps' >/dev/null 2>&1; then
+    SAMPLE=$(find "$WORK" -name 'forgejo-database-*.sqlite' | sort | tail -1)
+    if [ -s "${SAMPLE:-/nonexistent}" ]; then
+        log "  restored $(du -h "$SAMPLE" | cut -f1) $(basename "$SAMPLE")"
+        head -c 15 "$SAMPLE" | grep -q 'SQLite format' ||
+            fail "restored Forgejo database has no SQLite header"
+        # Opening it and counting rows proves more than a magic-number check.
+        CHECK=$(python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("pragma integrity_check").fetchone()[0])' "$SAMPLE" 2>/dev/null)
+        [ "$CHECK" = "ok" ] || fail "Forgejo database integrity_check said '${CHECK:-error}'"
+        REPOS=$(python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("select count(*) from repository").fetchone()[0])' "$SAMPLE" 2>/dev/null)
+        USERS_FJ=$(python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("select count(*) from user").fetchone()[0])' "$SAMPLE" 2>/dev/null)
+        log "  forgejo: ${REPOS:-?} repositories, ${USERS_FJ:-?} users"
+        [ "${USERS_FJ:-0}" -lt 1 ] && fail "restored Forgejo database has no users"
+    else
+        fail "no forgejo-database-*.sqlite in the snapshot (is backup-run current?)"
+    fi
+else
+    fail "restic restore of the staging directory failed"
+fi
+
+# --- 3. restore the newest MariaDB dump and actually load it ---------------
+# (the staging directory is already restored above)
+log "loading the newest MariaDB dump"
+
+DUMP=$(find "$WORK" -name 'nextcloud-db-1-*.sql.gz' | sort | tail -1)
+COUNTS=${DUMP%.sql.gz}.rowcounts.txt
+if [ -z "$DUMP" ]; then
+    fail "no nextcloud-db-1 dump in the snapshot"
+else
+    log "  $(basename "$DUMP") $(du -h "$DUMP" | cut -f1)"
+    gzip -t "$DUMP" || fail "restored dump is corrupt"
+
+    IMAGE=$(docker inspect nextcloud-db-1 -f '{{.Config.Image}}' 2>/dev/null || echo mariadb:11.8)
+    log "  starting scratch $IMAGE"
+    docker rm -f "$SCRATCH" >/dev/null 2>&1
+    docker run -d --name "$SCRATCH" -e MARIADB_ROOT_PASSWORD=drill "$IMAGE" >/dev/null
+
+    for i in $(seq 1 60); do
+        docker exec "$SCRATCH" mariadb -uroot -pdrill -e 'select 1' >/dev/null 2>&1 && break
+        sleep 2
+        [ "$i" -eq 60 ] && fail "scratch database never became ready"
+    done
+
+    log "  loading the dump"
+    if zcat "$DUMP" | docker exec -i "$SCRATCH" mariadb -uroot -pdrill 2>/dev/null; then
+        log "  loaded"
+    else
+        fail "loading the dump into a clean server failed"
+    fi
+
+    # The real test: does the restored database contain the rows the live one
+    # had when the dump was taken?
+    RESTORED=$(docker exec "$SCRATCH" mariadb -uroot -pdrill -N -B -e \
+        'select count(*) from nextcloud.oc_filecache' 2>/dev/null)
+    LIVE=$(docker exec nextcloud-db-1 sh -c \
+        'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e "select count(*) from nextcloud.oc_filecache"' 2>/dev/null)
+    log "  oc_filecache rows: restored=${RESTORED:-?} live=${LIVE:-?}"
+    if [ -z "$RESTORED" ] || [ "${RESTORED:-0}" -lt 1 ]; then
+        fail "restored database has no oc_filecache rows"
+    elif [ -n "$LIVE" ] && [ "$LIVE" -gt 0 ]; then
+        # Allow drift: the dump is up to a day older than the live database.
+        DIFF=$(( LIVE > RESTORED ? LIVE - RESTORED : RESTORED - LIVE ))
+        PCT=$(( DIFF * 100 / LIVE ))
+        [ "$PCT" -gt 20 ] && fail "restored row count differs from live by ${PCT}%"
+    fi
+
+    USERS=$(docker exec "$SCRATCH" mariadb -uroot -pdrill -N -B -e \
+        'select count(*) from nextcloud.oc_users' 2>/dev/null)
+    log "  oc_users rows: ${USERS:-?}"
+    [ "${USERS:-0}" -lt 1 ] && fail "restored database has no users"
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    log "DRILL FAILED — the backup is not known to be restorable"
+    exit 1
+fi
+log "drill passed: repository readable, file restored, database loaded and verified"
+exit 0

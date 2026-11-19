@@ -215,6 +215,26 @@ next sync would discard the commits. Push to GitHub and let the mirror follow.
 A repository that should be writable in Forgejo must not be a mirror; keep it
 out of the GitHub account, or accept that the two will diverge.
 
+## Backups
+
+`scripts/setup-restic-backup.sh` installs a nightly restic backup of the
+state that rebuilds this server — database dumps, `gitea/`, `npm_data/`, the
+`npm_letsencrypt` and Portainer volumes, `meelo_settings/`, `navidrome_data/`
+and `Documents/`, roughly 3 GB — plus a monthly restore drill. Both mail on
+failure through the same path as the health check.
+
+```bash
+sudo ./scripts/setup-restic-backup.sh
+sudo /usr/local/sbin/backup-run              # nightly, by timer
+sudo /usr/local/sbin/backup-restore-drill    # monthly, by timer
+```
+
+Media is out of scope: `Pictures/` alone is 3.3 TB and is an external storage
+Nextcloud merely exposes, not data Nextcloud owns. See
+[SETUP.md §12](SETUP.md#12-backups) for why the dumps are verified three ways,
+why both SQLite databases are checkpointed rather than copied, and why
+`restic check` passing is not the same as a backup that restores.
+
 ## Daily health check
 
 `scripts/server-healthcheck.sh` reports only problems and exits non-zero when

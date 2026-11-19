@@ -42,12 +42,24 @@ if command -v smartctl >/dev/null; then
 fi
 
 # --- backups ---------------------------------------------------------------
-# / is a RAID0 with no redundancy: a stale backup is a finding, not a nitpick.
-if [ -d "$BACKUP_DIR" ]; then
-    newest=$(find "$BACKUP_DIR" -maxdepth 1 -type f -mtime -"$BACKUP_MAX_AGE_DAYS" 2>/dev/null | head -1)
-    [ -z "$newest" ] && p "BACKUP: nothing in $BACKUP_DIR newer than ${BACKUP_MAX_AGE_DAYS}d"
+# Asks the repository, not the filesystem: a dump sitting next to the data it
+# protects proves nothing when the array has no redundancy.
+if [ -r /etc/restic/env ]; then
+    # shellcheck disable=SC1091
+    . /etc/restic/env
+    age=$(restic snapshots --latest 1 --json 2>/dev/null |
+        python3 -c 'import json,sys,datetime
+try:
+    s=json.load(sys.stdin)[0]["time"][:19]
+    print((datetime.datetime.now()-datetime.datetime.fromisoformat(s)).days)
+except Exception:
+    print(999)' 2>/dev/null)
+    [ "${age:-999}" -gt 2 ] && p "BACKUP: newest restic snapshot is ${age}d old (repo $RESTIC_REPOSITORY)"
+    case "$RESTIC_REPOSITORY" in
+        /*) p "BACKUP: repository $RESTIC_REPOSITORY is on this host; a disk loss takes the backups with it" ;;
+    esac
 else
-    p "BACKUP: $BACKUP_DIR does not exist"
+    p "BACKUP: /etc/restic/env missing — no backup configured"
 fi
 
 # --- host ------------------------------------------------------------------
